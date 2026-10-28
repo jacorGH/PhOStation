@@ -9,7 +9,7 @@
     role: null, net: null, code: null, files: null, bios: null, multitap: false,
     myPort: null, myRole: 'player', view: 'full', lockViews: true, localFull: false,
     roster: [], hostState: null, running: false, ejsUi: false, want: 'player',
-    skinId: P.skin || 'default', ff: false, gotStream: false,
+    skinId: P.skin || 'default', ff: false, gotStream: false, gameId: null,
   };
 
   // ---------- helpers ----------
@@ -53,6 +53,20 @@
     if (S.role === 'host' && S.net && !S.running) { S.net.destroy(); S.net = null; S.role = null; }
     show('home');
   }));
+  // If the last load never finished, the page was reloaded mid-load (on iPhone: out of memory).
+  try {
+    const last = JSON.parse(localStorage.getItem('phostation.loading') || 'null');
+    localStorage.removeItem('phostation.loading');
+    if (last && Date.now() - last.at < 30 * 60e3) {
+      const where = { core: 'while downloading the emulator', disc: 'while loading the disc', boot: 'while booting the disc' }[last.stage] || 'while loading';
+      const msg = `${last.game || 'The game'} stopped ${where} and the page restarted. `
+        + (last.stage === 'core'
+          ? 'Check the connection and try again.'
+          : 'iPhone does this when a game needs more memory than Safari allows. Close other tabs and try again. A .chd or .pbp copy of the disc uses much less memory than .bin or .iso.');
+      $$('[data-crash]').forEach((el) => { el.textContent = msg; el.hidden = false; });
+    }
+  } catch (e) {}
+
   const qRoom = new URLSearchParams(location.search).get('room');
   if (qRoom) { $('#codeInput').value = qRoom.toUpperCase().slice(0, 5); show('join'); }
 
@@ -61,6 +75,7 @@
     S.role = 'host';
     show('hostSetup');
     loadSavedBios();
+    renderLibrary();
     try { openRoom(); }
     catch (e) { setHostStatus('The lobby library didn’t load, so friends can’t join. You can still play solo.'); }
   }
@@ -99,16 +114,67 @@
   };
   $('#shareBtn').onclick = share;
 
-  $('#gameFile').onchange = (e) => {
+  // ---------- games list ----------
+  const fmtSize = (n) => (n >= 1e9 ? (n / 1e9).toFixed(1) + ' GB' : Math.round(n / 1e6) + ' MB');
+  function fmtWhen(t) {
+    if (!t) return 'not played yet';
+    const d = Math.floor((Date.now() - t) / 864e5);
+    return d <= 0 ? 'played today' : d === 1 ? 'played yesterday' : `played ${d} days ago`;
+  }
+  async function renderLibrary() {
+    let games = [];
+    try { games = await PS.library.list(); } catch (e) {}
+    $('#library').hidden = !games.length;
+    $('#pickTitle').textContent = games.length ? 'Add another game' : 'Choose a game';
+    $('#libList').innerHTML = games.map((g) => `
+      <div class="game ${g.id === S.gameId ? 'sel' : ''}">
+        <button data-pick="${g.id}"><b>${esc(g.title)}</b><small>${fmtSize(g.size)}${g.count > 1 ? `, ${g.count} files` : ''}, ${fmtWhen(g.played)}</small></button>
+        <button class="del" data-del="${g.id}" aria-label="Remove ${esc(g.title)}">×</button>
+      </div>`).join('');
+  }
+  $('#libList').addEventListener('click', async (e) => {
+    const pick = e.target.closest('[data-pick]');
+    const del = e.target.closest('[data-del]');
+    if (del) {
+      if (!confirm('Remove this game from the list? The file on your phone isn\u2019t touched.')) return;
+      await PS.library.remove(del.dataset.del);
+      if (S.gameId === del.dataset.del) { S.gameId = null; S.files = null; $('#startBtn').disabled = true; }
+      renderLibrary();
+      return;
+    }
+    if (pick) await selectGame(pick.dataset.pick);
+  });
+  async function selectGame(id) {
+    const files = await PS.library.files(id).catch(() => null);
+    if (!files || !files.length) { toast('That game\u2019s files are missing. Add it again.'); return; }
+    const g = (await PS.library.list()).find((x) => x.id === id);
+    S.gameId = id;
+    S.files = files;
+    if (g) $('#multitapChk').checked = !!g.multitap;
+    $('#gamePick').classList.remove('set');
+    $('#gameName').textContent = '.chd, .pbp, .iso, .bin + .cue, or a .zip. It stays in your games list.';
+    $('#startBtn').disabled = false;
+    renderLibrary();
+  }
+
+  $('#gameFile').onchange = async (e) => {
     const fs = [...e.target.files];
+    e.target.value = '';
     if (!fs.length) return;
-    S.files = fs;
-    const cue = fs.find((f) => /\.cue$/i.test(f.name));
-    $('#gameName').textContent = fs.length === 1 ? fs[0].name : `${fs.length} files${cue ? ', starting with ' + cue.name : ''}`;
+    if (fs.length === 1 && /\.cue$/i.test(fs[0].name)) { toast('Select the .cue together with its .bin file(s)', 4000); return; }
+    $('#gameName').textContent = 'Saving to your games…';
     $('#gamePick').classList.add('set');
-    const lonelyCue = fs.length === 1 && /\.cue$/i.test(fs[0].name);
-    if (lonelyCue) toast('Select the .cue together with its .bin file(s)', 4000);
-    $('#startBtn').disabled = lonelyCue;
+    try {
+      const entry = await PS.library.add(fs, $('#multitapChk').checked);
+      await selectGame(entry.id);
+      toast(`Saved \u201c${entry.title}\u201d to your games`);
+    } catch (err) {
+      // Storage full or blocked: still let them play this session.
+      S.gameId = null;
+      S.files = fs;
+      $('#startBtn').disabled = false;
+      $('#gameName').textContent = `${fs[0].name}${fs.length > 1 ? ` + ${fs.length - 1} more` : ''} (not saved, phone storage is full)`;
+    }
   };
 
   async function loadSavedBios() {
@@ -133,6 +199,7 @@
 
   $('#startBtn').onclick = async () => {
     S.multitap = $('#multitapChk').checked;
+    if (S.gameId) PS.library.update(S.gameId, { played: Date.now(), multitap: S.multitap }).catch(() => {});
     if (!S.net) { S.net = soloNet(); S.myPort = 0; }
     S.net.setMaxPorts(S.multitap ? 4 : 2);
     enterPlay();

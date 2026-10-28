@@ -18,27 +18,48 @@
   const clean = (n) => n.replace(/[#<$+%>!`&*'|{}/\\?"=@:^\r\n]/g, '').trim() || 'game';
   const stripExt = (n) => n.replace(/\.[^.]+$/, '');
 
-  async function prepareGame(files) {
-    files = [...files];
-    if (files.length === 1) {
-      const f = files[0];
-      const isArchive = /\.(zip|7z)$/i.test(f.name);
-      // Single disc image (.chd .pbp .iso .bin .img) or an archive: hand it over directly.
-      // EmulatorJS names blob files after EJS_gameName, so keep the real extension.
-      return { url: URL.createObjectURL(f), name: clean(isArchive ? stripExt(f.name) : f.name), title: stripExt(f.name) };
-    }
-    // Several files (cue + bins, multi-disc): pack them into a store-only zip.
-    const zip = new JSZip();
-    for (const f of files) zip.file(f.name, f);
+  // Breadcrumbs survive a crash-reload so the app can say where loading died.
+  function crumb(stage) {
+    try {
+      if (stage) localStorage.setItem('phostation.loading', JSON.stringify({ stage, game: PS.emu.title, at: Date.now() }));
+      else localStorage.removeItem('phostation.loading');
+    } catch (e) {}
+  }
+
+  const isArchive = (f) => /\.(zip|7z)$/i.test(f.name);
+
+  // Decide which file the core should boot and whether we need a generated playlist.
+  function plan(files) {
     const cues = files.filter((f) => /\.cue$/i.test(f.name)).map((f) => f.name).sort();
-    if (cues.length > 1 && !files.some((f) => /\.m3u$/i.test(f.name))) {
-      zip.file(stripExt(cues[0]) + '.m3u', cues.join('\n'));
-    }
-    const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' }, (m) =>
-      handlers.progress && handlers.progress(`Packing disc ${Math.round(m.percent)}%`)
-    );
-    const lead = cues[0] || files[0].name;
-    return { url: URL.createObjectURL(blob), name: clean(stripExt(lead)), title: stripExt(lead) };
+    const m3u = files.find((f) => /\.m3u$/i.test(f.name));
+    let main, playlist = null;
+    if (m3u) main = m3u.name;
+    else if (cues.length > 1) { main = stripExt(cues[0]) + '.m3u'; playlist = cues.join('\n'); }
+    else if (cues.length === 1) main = cues[0];
+    else main = files[0].name;
+    return { main, playlist };
+  }
+
+  // Replace EmulatorJS's ROM download with a direct write into its file system.
+  // The disc is read once and handed over without copying (canOwn), which keeps
+  // memory at about 1x the disc size instead of 3-4x. iOS reloads the tab when it runs out.
+  function injectDisc(emu, files, p) {
+    if (!emu || typeof emu.downloadRom !== 'function') return false;
+    emu.downloadRom = async function () {
+      const FS = this.gameManager.FS;
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        crumb('disc');
+        handlers.progress && handlers.progress(`Loading disc${files.length > 1 ? ` (${i + 1}/${files.length})` : ''}…`);
+        const bytes = new Uint8Array(await f.arrayBuffer());
+        FS.writeFile('/' + f.name, bytes, { canOwn: true });
+      }
+      if (p.playlist) FS.writeFile('/' + p.main, p.playlist);
+      this.fileName = p.main;
+      crumb('boot');
+      handlers.progress && handlers.progress(null);
+    };
+    return true;
   }
 
   async function prepareBios(file) {
@@ -59,39 +80,61 @@
 
   async function load(opts) {
     handlers = opts.handlers || {};
-    const g = await prepareGame(opts.files);
-    gameName = g.name;
-    PS.emu.title = g.title;
+    const files = [...opts.files];
+    const archive = files.length === 1 && isArchive(files[0]);
+    const p = archive ? null : plan(files);
+    PS.emu.title = stripExt(archive ? files[0].name : p.main);
+    gameName = clean(PS.emu.title);
+    crumb('core');
 
     window.EJS_player = '#game';
     window.EJS_core = 'psx';
     window.EJS_pathtodata = DATA;
-    window.EJS_gameUrl = g.url;
-    window.EJS_gameName = g.name;
+    // Only fetched by EmulatorJS for .zip/.7z, or if the direct write can't be installed.
+    window.EJS_gameUrl = URL.createObjectURL(files[0]);
+    window.EJS_gameName = archive ? gameName : clean(files[0].name);
     window.EJS_startOnLoaded = true;
     window.EJS_color = '#eaa64a';
     window.EJS_defaultOptions = multitapOpts(!!opts.multitap);
     if (opts.bios) window.EJS_biosUrl = await prepareBios(opts.bios);
+
     const fireStarted = () => {
       if (started) return;
       started = true;
+      crumb(null);
       handlers.started && handlers.started();
     };
     window.EJS_onGameStart = fireStarted;
-    // Fallback in case this EmulatorJS build doesn't call EJS_onGameStart.
     const poll = setInterval(() => {
       if (window.EJS_emulator && window.EJS_emulator.started && canvas()) { clearInterval(poll); fireStarted(); }
     }, 500);
+
+    // Catch the EmulatorJS instance the moment loader.js creates it, before it asks for the ROM.
+    let inst;
+    let injected = archive;
+    Object.defineProperty(window, 'EJS_emulator', {
+      configurable: true,
+      get: () => inst,
+      set: (v) => {
+        inst = v;
+        if (!archive) {
+          injected = injectDisc(v, files, p);
+          if (!injected && files.length > 1) {
+            handlers.progress && handlers.progress('This EmulatorJS version can\u2019t load .cue/.bin sets. Convert the disc to .chd or .pbp.');
+          }
+        }
+      },
+    });
 
     handlers.progress && handlers.progress('Downloading emulator core…');
     await new Promise((res, rej) => {
       const s = document.createElement('script');
       s.src = DATA + 'loader.js';
       s.onload = res;
-      s.onerror = () => rej(new Error('EmulatorJS could not be downloaded. Check the connection and try again.'));
+      s.onerror = () => { crumb(null); rej(new Error('EmulatorJS could not be downloaded. Check the connection and try again.')); };
       document.body.appendChild(s);
     });
-    handlers.progress && handlers.progress(null);
+    if (injected || archive) handlers.progress && handlers.progress(null);
   }
 
   function setInput(port, st) {
@@ -188,7 +231,7 @@
 
   PS.emu = {
     load, setInput, releaseAll, captureStream, canvas,
-    saveState, loadState, stateInfo, restart, setMultitap, toggleFastForward,
+    saveState, loadState, crumb, stateInfo, restart, setMultitap, toggleFastForward,
     get started() { return started; },
     title: '',
   };

@@ -1,7 +1,7 @@
 /* PhoStation service worker: network-first for the app shell so updates show up right away,
    cached copy when offline. EmulatorJS and libraries come from their CDNs and are not cached here. */
-const CACHE = 'phostation-v1';
-const SHELL = ['./', 'index.html', 'css/app.css', 'js/boot.js', 'js/emu.js', 'js/controls.js', 'js/delta.js', 'js/net.js', 'js/app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
+const CACHE = 'phostation-v2';
+const SHELL = ['./', 'index.html', 'css/app.css', 'js/boot.js', 'js/emu.js', 'js/library.js', 'js/controls.js', 'js/delta.js', 'js/net.js', 'js/app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

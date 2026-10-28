@@ -14,6 +14,8 @@ Push this folder to a GitHub repo and turn on GitHub Pages. Open the Pages URL o
 
 Disc formats: `.chd` and `.pbp` are best on phones (single file, smaller). `.iso`, single `.bin`, and `.zip` work too. For `.bin`/`.cue`, select the `.cue` and all its `.bin` files together. Selecting several `.cue` files builds a multi-disc playlist.
 
+Games you pick are saved to **Your games** on that device, so next time you just tap one. Removing a game from the list doesn't touch the original file.
+
 BIOS is optional. The core's built-in BIOS runs most games, and a real BIOS (e.g. `scph1001.bin`) improves compatibility. It's remembered on the device.
 
 ## Features
@@ -30,6 +32,7 @@ BIOS is optional. The core's built-in BIOS runs most games, and a real BIOS (e.g
 
 ## Good to know
 
+- Discs are written straight into the emulator without extra copies, so a game needs about its own size in memory. If the page ever restarts mid-load, the app tells you where it stopped. On iPhone that means Safari ran out of memory, and a `.chd` or `.pbp` copy of the disc fixes it.
 - If friends get stuck on "Connecting", their network blocks direct peer connections. Add a TURN relay in Settings (Metered and Twilio have free tiers).
 - The host should keep PhoStation in the foreground. iOS pauses background tabs, which freezes the game for everyone.
 - Turning on the mic on iPhone can switch iOS into call audio mode, which makes game sound quieter. That's an iOS behavior.
@@ -43,6 +46,7 @@ BIOS is optional. The core's built-in BIOS runs most games, and a real BIOS (e.g
 index.html          app shell
 css/app.css         styles
 js/boot.js          capture/audio hooks, prefs, storage (loads before EmulatorJS)
+js/library.js       saved games (IndexedDB)
 js/emu.js           EmulatorJS wrapper, input injection, save states, split-view math
 js/controls.js      touch pad, Delta skin layout, gamepad, keyboard, haptics
 js/delta.js         .deltaskin importer

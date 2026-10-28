@@ -34,6 +34,7 @@
       <button class="big primary" id="goHost"><b>Host a game</b><small>You run the disc and invite up to three friends</small></button>
       <button class="big" id="goJoin"><b>Join a room</b><small>Type the 5-letter code your friend sent</small></button>
     </div>
+    <p class="notice" data-crash hidden></p>
     <button class="link" id="goSettings">Controller skins and connection settings</button>
   </div>
 </section>
@@ -47,11 +48,17 @@
       <button class="ghost" id="shareBtn">Share invite</button>
     </div>
     <p class="status" id="hostStatus">Opening room…</p>
+    <p class="notice" data-crash hidden></p>
+
+    <div id="library" hidden>
+      <h3 class="lib-h">Your games</h3>
+      <div id="libList"></div>
+    </div>
 
     <label class="drop" id="gamePick">
       <input type="file" id="gameFile" multiple>
-      <b>Choose a game</b>
-      <span id="gameName">.chd, .pbp, .iso, .bin + .cue, or a .zip</span>
+      <b id="pickTitle">Choose a game</b>
+      <span id="gameName">.chd, .pbp, .iso, .bin + .cue, or a .zip. It stays in your games list.</span>
     </label>
     <div class="drop small" id="biosPick">
       <label><input type="file" id="biosFile"><b>BIOS file</b><span id="biosName">Optional. The built-in BIOS runs most games.</span></label>
@@ -122,6 +129,7 @@
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="js/emu.js"></script>
+<script src="js/library.js"></script>
 <script src="js/controls.js"></script>
 <script src="js/delta.js"></script>
 <script src="js/net.js"></script>
