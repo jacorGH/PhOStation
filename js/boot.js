@@ -14,6 +14,15 @@
     return origGetContext.call(this, type, attrs);
   };
 
+  // ---------- 1b. Render the emulator at PS1 resolution ----------
+  // Libraries size their canvas by devicePixelRatio; on a 3x iPhone that means 9x the pixels
+  // to draw, copy and stream for a 320x240 picture. The page's own text and images are unaffected.
+  try {
+    const realDpr = window.devicePixelRatio || 1;
+    PS.realDpr = realDpr;
+    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, get: () => 1 });
+  } catch (e) {}
+
   // ---------- 2. Game-audio tap ----------
   PS.audio = { contexts: new Set(), taps: new Map() };
   const origConnect = AudioNode.prototype.connect;

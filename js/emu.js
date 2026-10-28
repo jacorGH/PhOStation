@@ -78,6 +78,48 @@
     pcsx_rearmed_multitap2: 'disabled',
   });
 
+  // Speed presets for PCSX-ReARMed. Both old and new option names are set; unknown keys are ignored.
+  const PERF = {
+    quality:  { frameskip_type: 'disabled', frameskip: '0', frameskip_interval: '1', psxclock: '57', spu_interpolation: 'gaussian', spu_reverb: 'enabled', dithering: 'enabled' },
+    balanced: { frameskip_type: 'auto', frameskip: '0', frameskip_interval: '1', psxclock: '57', spu_interpolation: 'simple', spu_reverb: 'enabled', dithering: 'disabled' },
+    fast:     { frameskip_type: 'auto', frameskip: '1', frameskip_interval: '1', psxclock: '50', spu_interpolation: 'off', spu_reverb: 'disabled', dithering: 'disabled' },
+    turbo:    { frameskip_type: 'fixed_interval', frameskip: '1', frameskip_interval: '1', psxclock: '45', spu_interpolation: 'off', spu_reverb: 'disabled', dithering: 'disabled' },
+  };
+  const perfOpts = (name) => {
+    const o = {};
+    const p = PERF[name] || PERF.balanced;
+    for (const k in p) o['pcsx_rearmed_' + k] = p[k];
+    o.pcsx_rearmed_show_bios_bootlogo = 'disabled';
+    return o;
+  };
+  function setPerf(name) {
+    const g = gm();
+    if (!g) return;
+    const o = perfOpts(name);
+    for (const k in o) { try { g.setVariable(k, o[k]); } catch (e) {} }
+  }
+
+  // Average screen refresh the browser gives us. Low Power Mode on iPhone caps it at 30.
+  function measureFps(ms = 2000) {
+    return new Promise((res) => {
+      let n = 0;
+      const t0 = performance.now();
+      const tick = (t) => { n++; if (t - t0 < ms) requestAnimationFrame(tick); else res((n * 1000) / (t - t0)); };
+      requestAnimationFrame(tick);
+    });
+  }
+  // Run the emulator on a 60 Hz timer instead of the (possibly throttled) display refresh.
+  function setUncapped(on) {
+    const M = window.EJS_emulator && window.EJS_emulator.Module;
+    const f = M && (M._emscripten_set_main_loop_timing || M.setMainLoopTiming);
+    if (typeof f !== 'function') return false;
+    try { on ? f(0, 16) : f(1, 1); return true; } catch (e) { return false; }
+  }
+  function canUncap() {
+    const M = window.EJS_emulator && window.EJS_emulator.Module;
+    return !!(M && typeof (M._emscripten_set_main_loop_timing || M.setMainLoopTiming) === 'function');
+  }
+
   async function load(opts) {
     handlers = opts.handlers || {};
     const files = [...opts.files];
@@ -95,7 +137,7 @@
     window.EJS_gameName = archive ? gameName : clean(files[0].name);
     window.EJS_startOnLoaded = true;
     window.EJS_color = '#eaa64a';
-    window.EJS_defaultOptions = multitapOpts(!!opts.multitap);
+    window.EJS_defaultOptions = Object.assign(perfOpts(opts.perf), multitapOpts(!!opts.multitap));
     if (opts.bios) window.EJS_biosUrl = await prepareBios(opts.bios);
 
     const fireStarted = () => {
@@ -230,7 +272,7 @@
   };
 
   PS.emu = {
-    load, setInput, releaseAll, captureStream, canvas,
+    load, setInput, releaseAll, captureStream, canvas, setPerf, measureFps, setUncapped, canUncap,
     saveState, loadState, crumb, stateInfo, restart, setMultitap, toggleFastForward,
     get started() { return started; },
     title: '',

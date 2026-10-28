@@ -16,6 +16,10 @@ Disc formats: `.chd` and `.pbp` are best on phones (single file, smaller). `.iso
 
 Games you pick are saved to **Your games** on that device, so next time you just tap one. Removing a game from the list doesn't touch the original file.
 
+**Shrink** (in the games list) converts a .bin/.cue, .img or raw .iso into a compressed .pbp right on the phone. Multi-disc sets become one .pbp per disc plus a playlist. **Save** sends the .pbp to the share sheet so you can keep it in Files or give it to a friend.
+
+**Speed** (host setup and in-game menu): Quality, Balanced, Fast, Turbo. Faster presets skip drawing frames, simplify sound effects and underclock the emulated console. If the phone's screen is limited to 30 fps (Low Power Mode), the emulator switches to its own 60 fps timer automatically.
+
 BIOS is optional. The core's built-in BIOS runs most games, and a real BIOS (e.g. `scph1001.bin`) improves compatibility. It's remembered on the device.
 
 ## Features
@@ -46,7 +50,9 @@ BIOS is optional. The core's built-in BIOS runs most games, and a real BIOS (e.g
 index.html          app shell
 css/app.css         styles
 js/boot.js          capture/audio hooks, prefs, storage (loads before EmulatorJS)
-js/library.js       saved games (IndexedDB)
+js/library.js       saved games (IndexedDB + private files)
+js/shrink.js        .pbp conversion controller
+js/pbp-worker.js    .pbp encoder (runs in a background worker)
 js/emu.js           EmulatorJS wrapper, input injection, save states, split-view math
 js/controls.js      touch pad, Delta skin layout, gamepad, keyboard, haptics
 js/delta.js         .deltaskin importer

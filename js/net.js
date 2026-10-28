@@ -92,7 +92,9 @@
     const self = { clientId: 'host', name: cleanName(name), role: 'player', port: 0, peerId: hostId, voice: false, connected: true, isHost: true };
     members.set('host', self);
     const st = { view: 'full', lockViews: true, locked: false, maxPorts: 2, quality: 'auto', running: false };
-    let peer = null, stream = null, canvasW = 640, destroyed = false;
+    let peer = null, streamFactory = null, streamP = null, canvasW = 640, destroyed = false;
+    // The stream is only created once someone is watching, so solo play doesn't pay for video encoding.
+    const getStream = () => streamP || (streamP = Promise.resolve().then(streamFactory));
     const voice = new Voice();
 
     function open() {
@@ -173,7 +175,7 @@
           Object.assign(m, { ctrl: conn, peerId: conn.peer, connected: true, voice: false, seq: -1, name: cleanName(d.name), goodStreak: 0, appliedTier: null, lastBytes: null });
           conn.send({ t: 'welcome', port: m.port, role: m.role });
           broadcast();
-          if (st.running && stream) callGuest(m);
+          if (st.running) callGuest(m);
           h.toast(returning ? `${m.name} is back` : `${m.name} joined${m.port != null ? ' as P' + (m.port + 1) : ' to watch'}`);
           break;
         }
@@ -193,8 +195,12 @@
       m.expire = setTimeout(() => { if (!m.connected) { members.delete(cid); broadcast(); } }, 120000);
     }
 
-    function callGuest(m) {
-      if (!m.peerId || !peer || !peer.open) return;
+    async function callGuest(m) {
+      if (!m.peerId || !peer || !peer.open || !streamFactory) return;
+      let stream;
+      try { stream = await getStream(); }
+      catch (e) { streamP = null; h.toast('This browser can\u2019t stream the game to friends.'); return; }
+      if (!m.connected) return;
       if (m.call) m.call.close();
       const call = peer.call(m.peerId, stream, { metadata: { kind: 'game' } });
       m.call = call;
@@ -268,8 +274,8 @@
       get state() { return { ...st }; },
       get voiceOn() { return voice.on; },
       roster: rosterData,
-      setRunning(s) {
-        stream = s; st.running = true;
+      setRunning(factory) {
+        streamFactory = factory; st.running = true;
         for (const m of members.values()) if (!m.isHost && m.connected) callGuest(m);
         broadcast();
       },

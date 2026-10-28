@@ -65,6 +65,13 @@
       <button class="x" id="biosClear" hidden aria-label="Forget BIOS">×</button>
     </div>
     <label class="toggle"><input type="checkbox" id="multitapChk"><span><b>Multitap</b><small>Needed for 3–4 player games like Crash Team Racing</small></span></label>
+    <div class="speed">
+      <span class="lbl">Speed</span>
+      <div class="seg quad" id="perfSeg">
+        <button data-perf="quality">Quality</button><button data-perf="balanced">Balanced</button><button data-perf="fast">Fast</button><button data-perf="turbo">Turbo</button>
+      </div>
+      <p class="note" id="perfNote"></p>
+    </div>
     <button class="big primary" id="startBtn" disabled><b>Start game</b></button>
   </div>
 </section>
@@ -130,6 +137,7 @@
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="js/emu.js"></script>
 <script src="js/library.js"></script>
+<script src="js/shrink.js"></script>
 <script src="js/controls.js"></script>
 <script src="js/delta.js"></script>
 <script src="js/net.js"></script>

@@ -25,6 +25,7 @@
       title: stripExt(mainName(files)).replace(/\s*\(disc 1\)\s*/i, ' ').trim(),
       size: files.reduce((n, f) => n + f.size, 0),
       count: files.length,
+      names: files.map((f) => f.name),
       added: Date.now(), played: 0, multitap: !!multitap,
     };
     l.unshift(entry);
@@ -35,7 +36,13 @@
 
   async function files(id) {
     const rec = await PS.store.get('game:' + id);
-    return rec && rec.files;
+    if (!rec) return null;
+    if (rec.opfs) {
+      // shrunk discs live in private files; a multi-disc playlist is kept as text here
+      const discs = await PS.shrink.readDir(rec.opfs, rec.names);
+      return discs.concat((rec.extra || []).map((x) => new File([x.text], x.name, { type: 'text/plain' })));
+    }
+    return rec.files;
   }
 
   async function update(id, patch) {
@@ -47,10 +54,27 @@
     await saveList(l);
   }
 
+  // Swap a game's files (e.g. after shrinking to .pbp) but keep its place, settings and history.
+  // With opfsDir, the files already live in the private file system and only their names are kept.
+  async function replaceFiles(id, files, opfsDir) {
+    const m3u = files.filter((f) => /\.m3u$/i.test(f.name));
+    const discs = files.filter((f) => !/\.m3u$/i.test(f.name));
+    const extra = await Promise.all(m3u.map(async (f) => ({ name: f.name, text: await f.text() })));
+    await PS.store.set('game:' + id, opfsDir ? { opfs: opfsDir, names: discs.map((f) => f.name), extra } : { files });
+    await update(id, {
+      sig: files.map((f) => `${f.name}:${f.size}`).sort().join('|'),
+      size: files.reduce((n, f) => n + f.size, 0),
+      count: files.length,
+      names: files.map((f) => f.name),
+    });
+  }
+
   async function remove(id) {
+    const rec = await PS.store.get('game:' + id).catch(() => null);
+    if (rec && rec.opfs) await PS.shrink.removeDir(rec.opfs);
     await PS.store.del('game:' + id);
     await saveList((await list()).filter((g) => g.id !== id));
   }
 
-  PS.library = { list, add, files, update, remove };
+  PS.library = { list, add, files, update, replaceFiles, remove };
 })();

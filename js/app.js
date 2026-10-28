@@ -126,15 +126,27 @@
     try { games = await PS.library.list(); } catch (e) {}
     $('#library').hidden = !games.length;
     $('#pickTitle').textContent = games.length ? 'Add another game' : 'Choose a game';
-    $('#libList').innerHTML = games.map((g) => `
-      <div class="game ${g.id === S.gameId ? 'sel' : ''}">
-        <button data-pick="${g.id}"><b>${esc(g.title)}</b><small>${fmtSize(g.size)}${g.count > 1 ? `, ${g.count} files` : ''}, ${fmtWhen(g.played)}</small></button>
-        <button class="del" data-del="${g.id}" aria-label="Remove ${esc(g.title)}">×</button>
-      </div>`).join('');
+    $('#libList').innerHTML = games.map((g) => {
+      const named = (g.names || []).map((name) => ({ name }));
+      const shrinkable = !g.names || PS.shrink.canShrink(named);
+      const isPbp = named.some((f) => /\.pbp$/i.test(f.name));
+      const busy = S.shrinking === g.id;
+      return `
+      <div class="game ${g.id === S.gameId ? 'sel' : ''} ${busy ? 'busy' : ''}" data-gid="${g.id}">
+        <button data-pick="${g.id}" ${busy ? 'disabled' : ''}><b>${esc(g.title)}</b><small>${fmtSize(g.size)}${isPbp ? ' .pbp' : ''}, ${fmtWhen(g.played)}</small></button>
+        ${shrinkable && !isPbp ? `<button class="act" data-shrink="${g.id}" ${S.shrinking ? 'disabled' : ''}>Shrink</button>` : ''}
+        ${isPbp ? `<button class="act" data-save="${g.id}">Save</button>` : ''}
+        <button class="del" data-del="${g.id}" aria-label="Remove ${esc(g.title)}" ${busy ? 'disabled' : ''}>×</button>
+      </div>`;
+    }).join('');
   }
   $('#libList').addEventListener('click', async (e) => {
     const pick = e.target.closest('[data-pick]');
     const del = e.target.closest('[data-del]');
+    const shrink = e.target.closest('[data-shrink]');
+    const save = e.target.closest('[data-save]');
+    if (shrink) return shrinkGame(shrink.dataset.shrink);
+    if (save) return saveGame(save.dataset.save);
     if (del) {
       if (!confirm('Remove this game from the list? The file on your phone isn\u2019t touched.')) return;
       await PS.library.remove(del.dataset.del);
@@ -144,13 +156,60 @@
     }
     if (pick) await selectGame(pick.dataset.pick);
   });
+
+  async function shrinkGame(id) {
+    if (S.shrinking) return;
+    const files = await PS.library.files(id).catch(() => null);
+    const g = (await PS.library.list()).find((x) => x.id === id);
+    if (!files || !g) { toast('That game\u2019s files are missing. Add it again.'); return; }
+    if (!PS.shrink.canShrink(files)) { toast('Only .bin/.cue, .img, or raw .iso discs can be shrunk. This one is already compact.'); return; }
+    S.shrinking = id;
+    await renderLibrary();
+    requestWakeLock();
+    const label = $(`[data-gid="${id}"] small`);
+    try {
+      const r = await PS.shrink.toPbp(files, g.title, 'pbp-' + id, (p, extra) => {
+        if (label) label.textContent = `Shrinking ${Math.round(p * 100)}%${extra ? ', ' + extra : ''}. Keep this screen open.`;
+      });
+      await PS.library.replaceFiles(id, r.files, r.opfs ? 'pbp-' + id : null);
+      toast(`Shrunk to .pbp, ${Math.round(r.ratio * 100)}% of the original size`, 4000);
+      if (S.gameId === id) { S.shrinking = null; await selectGame(id); }
+    } catch (err) {
+      toast(err.message || 'The disc couldn\u2019t be shrunk.', 6000);
+    }
+    S.shrinking = null;
+    renderLibrary();
+  }
+
+  // Hand the .pbp to the share sheet (Save to Files) or download it.
+  async function saveGame(id) {
+    const files = await PS.library.files(id).catch(() => null);
+    if (!files) return;
+    try {
+      if (navigator.canShare && navigator.canShare({ files })) { await navigator.share({ files }); return; }
+    } catch (e) { if (e.name === 'AbortError') return; }
+    for (const f of files) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(f);
+      a.download = f.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    }
+  }
+
   async function selectGame(id) {
     const files = await PS.library.files(id).catch(() => null);
     if (!files || !files.length) { toast('That game\u2019s files are missing. Add it again.'); return; }
     const g = (await PS.library.list()).find((x) => x.id === id);
     S.gameId = id;
     S.files = files;
-    if (g) $('#multitapChk').checked = !!g.multitap;
+    if (g) {
+      $('#multitapChk').checked = !!g.multitap;
+      setPerfChoice(g.perf || P.perf || 'balanced');
+      if (!g.names) PS.library.update(id, { names: files.map((f) => f.name) }).catch(() => {});
+    }
     $('#gamePick').classList.remove('set');
     $('#gameName').textContent = '.chd, .pbp, .iso, .bin + .cue, or a .zip. It stays in your games list.';
     $('#startBtn').disabled = false;
@@ -197,16 +256,32 @@
   };
   $('#biosClear').onclick = async () => { setBios(null); try { await PS.store.del('bios'); } catch (e) {} };
 
+  // ---------- speed ----------
+  const PERF_NOTES = {
+    quality: 'Draws every frame with full sound effects. Needs a fast phone.',
+    balanced: 'Skips drawing a frame only when the phone falls behind.',
+    fast: 'Also lightens sound effects and slightly underclocks the console.',
+    turbo: 'Draws every other frame and underclocks more. A few games may run slower inside.',
+  };
+  S.perf = P.perf || 'balanced';
+  function setPerfChoice(v) {
+    S.perf = v;
+    $$('#perfSeg button').forEach((b) => b.classList.toggle('on', b.dataset.perf === v));
+    $('#perfNote').textContent = PERF_NOTES[v];
+  }
+  $$('#perfSeg button').forEach((b) => (b.onclick = () => { setPerfChoice(b.dataset.perf); P.perf = b.dataset.perf; }));
+  setPerfChoice(S.perf);
+
   $('#startBtn').onclick = async () => {
     S.multitap = $('#multitapChk').checked;
-    if (S.gameId) PS.library.update(S.gameId, { played: Date.now(), multitap: S.multitap }).catch(() => {});
+    if (S.gameId) PS.library.update(S.gameId, { played: Date.now(), multitap: S.multitap, perf: S.perf }).catch(() => {});
     if (!S.net) { S.net = soloNet(); S.myPort = 0; }
     S.net.setMaxPorts(S.multitap ? 4 : 2);
     enterPlay();
     setWaiting('Preparing the disc…');
     try {
       await PS.emu.load({
-        files: S.files, bios: S.bios, multitap: S.multitap,
+        files: S.files, bios: S.bios, multitap: S.multitap, perf: S.perf,
         handlers: { progress: setWaiting, started: onGameStarted },
       });
     } catch (err) {
@@ -224,8 +299,18 @@
     S.running = true;
     setWaiting(null);
     applyView();
-    try { S.net.setRunning(await PS.emu.captureStream()); }
-    catch (e) { toast('Streaming isn\u2019t supported in this browser, so friends won\u2019t see the game.', 5000); }
+    // Video is only captured and encoded once a friend is actually connected.
+    S.net.setRunning(() => PS.emu.captureStream());
+    // iPhone Low Power Mode limits the screen to 30 fps, and the emulator runs once per screen
+    // refresh, so games play at half speed. Switch the emulator to its own 60 fps timer.
+    setTimeout(async () => {
+      const fps = await PS.emu.measureFps(2000);
+      if (fps >= 45) return;
+      S.uncapped = PS.emu.setUncapped(true);
+      toast(S.uncapped
+        ? 'Your screen is limited to 30 fps (Low Power Mode?). The game now runs on its own 60 fps timer.'
+        : 'Your screen is limited to 30 fps, which halves game speed. Turn off Low Power Mode in Settings, Battery.', 7000);
+    }, 4000);
   }
 
   // ---------- join ----------
@@ -479,7 +564,11 @@
           html += `<div class="slot"><span>Slot ${i}<small>${at ? new Date(at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Empty'}</small></span>
             <button class="mini" data-do="save" data-slot="${i}">Save</button><button class="mini" data-do="load" data-slot="${i}" ${at ? '' : 'disabled'}>Load</button></div>`;
         }
-        html += `</div><h3>Game</h3><div class="row2">
+        html += `</div><h3>Speed</h3>
+          <div class="seg quad">${['quality', 'balanced', 'fast', 'turbo'].map((v) => `<button data-do="perf" data-v="${v}" class="${S.perf === v ? 'on' : ''}">${v[0].toUpperCase() + v.slice(1)}</button>`).join('')}</div>
+          <p class="note">${PERF_NOTES[S.perf]}</p>
+          ${PS.emu.canUncap() ? `<label class="toggle"><input type="checkbox" data-do="uncap" ${S.uncapped ? 'checked' : ''}><span><b>Ignore the 30 fps screen limit</b><small>Use when Low Power Mode is on. Turns itself on when needed.</small></span></label>` : ''}`;
+        html += `<h3>Game</h3><div class="row2">
           <button class="ghost" data-do="ff">${S.ff ? 'Stop fast forward' : 'Fast forward'}</button>
           <button class="ghost" data-do="restart">Restart</button></div>
           <button class="ghost wide" data-do="ejs">${S.ejsUi ? 'Hide emulator menu' : 'Show emulator menu'}</button>`;
@@ -524,6 +613,13 @@
           applyView(); closeSheet();
           if (S.ejsUi) toast('Emulator menu shown. Open the menu again to hide it.');
           break;
+        case 'perf':
+          S.perf = P.perf = t.dataset.v;
+          PS.emu.setPerf(S.perf);
+          if (S.gameId) PS.library.update(S.gameId, { perf: S.perf }).catch(() => {});
+          renderSheet();
+          break;
+        case 'uncap': S.uncapped = PS.emu.setUncapped(t.checked) && t.checked; break;
         case 'localfull': S.localFull = t.checked; applyView(); break;
         case 'skin': S.skinId = P.skin = t.value; renderPad(); break;
         case 'delskin':
