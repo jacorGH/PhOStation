@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PhoStation">
+<meta name="theme-color" content="#1d1937">
+<title>PhoStation</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/app.css">
+<!-- boot.js must run before EmulatorJS is loaded -->
+<script src="js/boot.js"></script>
+</head>
+<body data-view="home">
+
+<!-- ============ HOME ============ -->
+<section id="home" class="view active">
+  <div class="home-inner">
+    <div class="brand">
+      <img src="icons/icon-192.png" alt="" width="88" height="88">
+      <h1>PhoStation</h1>
+      <p>PS1 couch co-op, without the couch.</p>
+    </div>
+    <label class="field">
+      <span>Your name</span>
+      <input id="nameInput" maxlength="16" autocomplete="off" autocapitalize="words" placeholder="Player">
+    </label>
+    <div class="choices">
+      <button class="big primary" id="goHost"><b>Host a game</b><small>You run the disc and invite up to three friends</small></button>
+      <button class="big" id="goJoin"><b>Join a room</b><small>Type the 5-letter code your friend sent</small></button>
+    </div>
+    <button class="link" id="goSettings">Controller skins and connection settings</button>
+  </div>
+</section>
+
+<!-- ============ HOST SETUP ============ -->
+<section id="hostSetup" class="view">
+  <header class="bar"><button class="back" data-back aria-label="Back">‹</button><h2>Host a game</h2></header>
+  <div class="scroll">
+    <div class="roomcode">
+      <div class="tiles" id="hostCode" aria-label="Room code"></div>
+      <button class="ghost" id="shareBtn">Share invite</button>
+    </div>
+    <p class="status" id="hostStatus">Opening room…</p>
+
+    <label class="drop" id="gamePick">
+      <input type="file" id="gameFile" multiple>
+      <b>Choose a game</b>
+      <span id="gameName">.chd, .pbp, .iso, .bin + .cue, or a .zip</span>
+    </label>
+    <div class="drop small" id="biosPick">
+      <label><input type="file" id="biosFile"><b>BIOS file</b><span id="biosName">Optional. The built-in BIOS runs most games.</span></label>
+      <button class="x" id="biosClear" hidden aria-label="Forget BIOS">×</button>
+    </div>
+    <label class="toggle"><input type="checkbox" id="multitapChk"><span><b>Multitap</b><small>Needed for 3–4 player games like Crash Team Racing</small></span></label>
+    <button class="big primary" id="startBtn" disabled><b>Start game</b></button>
+  </div>
+</section>
+
+<!-- ============ JOIN ============ -->
+<section id="join" class="view">
+  <header class="bar"><button class="back" data-back aria-label="Back">‹</button><h2>Join a room</h2></header>
+  <div class="scroll">
+    <label class="field code">
+      <span>Room code</span>
+      <input id="codeInput" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" inputmode="text" placeholder="ABCDE">
+    </label>
+    <div class="seg" id="wantSeg" role="radiogroup">
+      <button data-want="player" class="on" role="radio" aria-checked="true">Play</button>
+      <button data-want="spectator" role="radio" aria-checked="false">Watch</button>
+    </div>
+    <button class="big primary" id="joinBtn"><b>Join</b></button>
+    <p class="status">Your controls are sent to the host, who streams the game back to you.</p>
+  </div>
+</section>
+
+<!-- ============ SETTINGS ============ -->
+<section id="settings" class="view">
+  <header class="bar"><button class="back" data-back aria-label="Back">‹</button><h2>Settings</h2></header>
+  <div class="scroll" id="settingsBody"></div>
+</section>
+
+<!-- ============ PLAY ============ -->
+<section id="play" class="view">
+  <div id="skinBg"></div>
+  <div id="hud">
+    <button class="chip" id="roomChip"></button>
+    <span class="chip stat" id="statChip"></span>
+    <button class="chip icon" id="micBtn" aria-label="Voice chat">
+      <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+    </button>
+    <button class="chip icon" id="menuBtn" aria-label="Menu">
+      <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+  </div>
+  <div id="screen">
+    <div id="frame">
+      <div id="game"></div>
+      <video id="remote" playsinline autoplay muted></video>
+    </div>
+    <div id="waiting" hidden><span class="spinner"></span><p></p></div>
+    <button id="tapSound" hidden>Tap for sound</button>
+  </div>
+  <div id="pad" class="pad"></div>
+</section>
+
+<!-- ============ SHEET ============ -->
+<div id="sheetWrap" hidden>
+  <div class="backdrop" data-do="close"></div>
+  <div class="sheet" role="dialog" aria-label="Menu"><div class="grab"></div><div id="sheetBody"></div></div>
+</div>
+
+<div id="ended" hidden><div><h2>Session over</h2><p id="endedMsg"></p><button class="big primary" id="endedBtn"><b>Back to start</b></button></div></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<input type="file" id="skinFile" hidden>
+
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="js/emu.js"></script>
+<script src="js/controls.js"></script>
+<script src="js/delta.js"></script>
+<script src="js/net.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
