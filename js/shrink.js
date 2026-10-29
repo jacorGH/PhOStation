@@ -38,6 +38,7 @@
     for (let i = 0; i < list.length; i++) {
       const r = await convertOne(files, list[i], list.length > 1 ? `${title} (Disc ${i + 1})` : title, outDir,
         (p) => onProgress((i + p) / list.length, list.length > 1 ? `disc ${i + 1}/${list.length}` : ''));
+      if (r.opfs) r.file.__opfs = outDir;
       out.push(r.file);
       opfs = opfs && r.opfs;
       // LibCrypt patch files must sit next to the disc with the same name to keep protected games booting.
@@ -50,12 +51,25 @@
     return { files: out, ratio, opfs };
   }
 
+  // Removes a storage folder: private files and any IndexedDB spill chunks under it.
   async function removeDir(dir) {
     try { await (await navigator.storage.getDirectory()).removeEntry(dir, { recursive: true }); } catch (e) {}
+    try {
+      const db = await new Promise((res, rej) => {
+        const r = indexedDB.open('phostation-spill', 1);
+        r.onupgradeneeded = () => r.result.createObjectStore('chunks');
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+      });
+      const tx = db.transaction('chunks', 'readwrite');
+      tx.objectStore('chunks').delete(IDBKeyRange.bound(dir + '/', dir + '/\uffff'));
+      await new Promise((res) => { tx.oncomplete = res; tx.onerror = res; tx.onabort = res; });
+      db.close();
+    } catch (e) {}
   }
   async function readDir(dir, names) {
     const d = await (await navigator.storage.getDirectory()).getDirectoryHandle(dir);
-    return Promise.all(names.map(async (n) => (await d.getFileHandle(n)).getFile()));
+    return Promise.all(names.map(async (n) => { const f = await (await d.getFileHandle(n)).getFile(); f.__opfs = dir; return f; }));
   }
 
   PS.shrink = { canShrink: (files) => discs(files).length > 0, toPbp, removeDir, readDir };

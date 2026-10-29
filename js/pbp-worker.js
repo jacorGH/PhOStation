@@ -2,7 +2,7 @@
    Layout follows popstation: PBP header -> PARAM.SFO -> DATA.PSAR ("PSISOIMG0000" header,
    TOC at +0x800, block index at +0x4000, raw-deflate blocks of 16 sectors from +0x100000).
    Output is written to the Origin Private File System so the result never sits in memory. */
-importScripts('https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js');
+importScripts('https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js', 'spill.js');
 
 const SECT = 2352;
 const BLOCK_SECT = 16;
@@ -158,26 +158,6 @@ function buildSfo(title, id) {
   return buf;
 }
 
-// ---------- output ----------
-async function makeWriter(dir, name) {
-  try {
-    const root = await navigator.storage.getDirectory();
-    const d = await root.getDirectoryHandle(dir, { create: true });
-    const fh = await d.getFileHandle(name, { create: true });
-    const h = await fh.createSyncAccessHandle();
-    h.truncate(0);
-    return { opfs: true, write: (buf, at) => h.write(buf, { at }), finish: async () => { h.flush(); h.close(); return fh.getFile(); } };
-  } catch (e) {
-    // No OPFS: keep the pieces in memory instead.
-    const parts = [];
-    return {
-      opfs: false,
-      write: (buf, at) => parts.push({ at, buf }),
-      finish: async () => new File(parts.sort((a, b) => a.at - b.at).map((p) => p.buf), name, { type: 'application/octet-stream' }),
-    };
-  }
-}
-
 // ---------- main ----------
 onmessage = async (e) => {
   const { files, cueName, binName, title, outName, outDir } = e.data;
@@ -195,7 +175,8 @@ onmessage = async (e) => {
     const sfo = buildSfo(title, id);
     const psarOff = (0x28 + sfo.length + 15) & ~15;
     const dataStart = psarOff + 0x100000;
-    const out = await makeWriter(outDir, outName);
+    // Compressed blocks go straight to storage; the header is filled in at the end.
+    const out = await Spill.open(outDir, outName, dataStart);
 
     // Compress the disc in 16-sector blocks.
     const index = [];
@@ -205,7 +186,7 @@ onmessage = async (e) => {
       const chunk = await readSectors(L, b * BLOCK_SECT, n * BLOCK_SECT);
       for (let i = 0; i < n; i++) {
         const c = fflate.deflateSync(chunk.subarray(i * BLOCK, (i + 1) * BLOCK), { level: 6 });
-        out.write(c, dataStart + dataPos);
+        await out.append(c);
         index.push([dataPos, c.length]);
         dataPos += c.length;
       }
@@ -243,10 +224,8 @@ onmessage = async (e) => {
 
     index.forEach(([off, size], i) => { u32(dv, P + 0x4000 + i * 32, off); u32(dv, P + 0x4000 + i * 32 + 4, size); });
     u32(dv, P + 0x4000 + index.length * 32, dataPos); // terminator: size 0
-    out.write(head, 0);
-
-    const file = await out.finish();
-    postMessage({ type: 'done', file, opfs: out.opfs, id, ratio: file.size / (L.total * SECT) });
+    const file = await out.finish(head);
+    postMessage({ type: 'done', file, opfs: out.kind === 'opfs', id, ratio: file.size / (L.total * SECT) });
   } catch (err) {
     postMessage({ type: 'error', message: err.message || String(err) });
   }

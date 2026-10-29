@@ -13,14 +13,12 @@
   async function saveList(l) { await PS.store.set('games', l); }
 
   const newId = () => 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
-  const isDisc = (f) => /\.pbp$/i.test(f.name);
-
-  // With opfsDir, the .pbp discs already live in the private file system; only small extras
-  // (playlist, LibCrypt .sbi) are copied into the database.
+  // Files that live in private storage (marked __opfs) are kept by reference; small extras are copied.
   async function record(files, opfsDir) {
     if (!opfsDir) return { files };
-    const extra = await Promise.all(files.filter((f) => !isDisc(f)).map(async (f) => ({ name: f.name, blob: new Blob([await f.arrayBuffer()]) })));
-    return { opfs: opfsDir, names: files.filter(isDisc).map((f) => f.name), extra };
+    const onDisk = files.filter((f) => f.__opfs === opfsDir);
+    const extra = await Promise.all(files.filter((f) => f.__opfs !== opfsDir).map(async (f) => ({ name: f.name, blob: new Blob([await f.arrayBuffer()]) })));
+    return { opfs: opfsDir, names: onDisk.map((f) => f.name), extra };
   }
   const meta = (files) => ({
     sig: files.map((f) => `${f.name}:${f.size}`).sort().join('|'),

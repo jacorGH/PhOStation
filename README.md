@@ -12,7 +12,7 @@ Push this folder to a GitHub repo and turn on GitHub Pages. Open the Pages URL o
 
 **Friends:** Join a room → type the code (or open the invite link) → Play or Watch.
 
-Disc formats: `.chd` and `.pbp` are best on phones (single file, smaller). `.iso` and single `.bin` work too. `.zip`, `.7z` and `.rar` archives are unpacked once when you add them, then compressed to `.pbp` automatically, so they load fast every time after that. Readme files and other junk inside the archive are skipped. For `.bin`/`.cue`, select the `.cue` and all its `.bin` files together. Selecting several `.cue` files builds a multi-disc playlist.
+Disc formats: `.chd` and `.pbp` are best on phones (single file, smaller). `.iso` and single `.bin` work too. `.zip`, `.7z` and `.rar` archives are unpacked once when you add them, then compressed to `.pbp` automatically, so they load fast every time after that. Readme files and other junk inside the archive are skipped. Unpacked and compressed data is written to storage as it's produced; only the archive itself has to fit in memory while it unpacks. For `.bin`/`.cue`, select the `.cue` and all its `.bin` files together. Selecting several `.cue` files builds a multi-disc playlist.
 
 Games you pick are saved to **Your games** on that device, so next time you just tap one. Removing a game from the list doesn't touch the original file.
 
@@ -61,6 +61,8 @@ js/boot.js          capture/audio hooks, prefs, storage (loads before EmulatorJS
 js/library.js       saved games (IndexedDB + private files)
 js/shrink.js        .pbp conversion controller
 js/unpack.js        .zip/.7z/.rar unpacking
+js/disk-worker.js   writes unpacked files to storage
+js/spill.js         streams big files to storage (private files or IndexedDB)
 js/pbp-worker.js    .pbp encoder (runs in a background worker)
 js/emu.js           EmulatorJS wrapper, input injection, save states, split-view math
 js/controls.js      touch pad, Delta skin layout, gamepad, keyboard, haptics

@@ -99,6 +99,17 @@
     }
   } catch (e) {}
 
+  try {
+    const add = JSON.parse(localStorage.getItem('phostation.adding') || 'null');
+    localStorage.removeItem('phostation.adding');
+    if (add && Date.now() - add.at < 30 * 60e3) {
+      const msg = add.stage === 'unpack'
+        ? `Unpacking ${add.game} stopped at ${add.p}% and the page restarted because the phone ran out of memory. The archive has to fit in memory while it unpacks. Unpack it on a computer, or tap a .zip in the Files app to expand it, then add the .bin and .cue files.`
+        : `Compressing ${add.game} stopped at ${add.p}% and the page restarted. Close other apps and Safari tabs, then add it again. If it keeps happening, add the .bin and .cue files without shrinking.`;
+      $$('[data-crash]').forEach((el) => { el.textContent = msg; el.hidden = false; });
+    }
+  } catch (e) {}
+
   const qRoom = new URLSearchParams(location.search).get('room');
   if (qRoom) { $('#codeInput').value = qRoom.toUpperCase().slice(0, 5); show('join'); }
 
@@ -220,8 +231,23 @@
   }
 
   async function selectGame(id) {
-    const files = await PS.library.files(id).catch(() => null);
+    let files = await PS.library.files(id).catch(() => null);
     if (!files || !files.length) { toast('That game\u2019s files are missing. Add it again.'); return; }
+    // Games added as archives by an older version: unpack them once now instead of at every launch.
+    if (files.length === 1 && PS.unpack.isArchiveName(files[0].name)) {
+      if (S.busy) return;
+      $('#gamePick').classList.add('set');
+      try {
+        await addArchive(files[0], (t) => ($('#gameName').textContent = t), id);
+        files = await PS.library.files(id);
+        toast('Unpacked. It loads quickly from now on.');
+      } catch (err) {
+        toast(err.message || 'That game couldn\u2019t be unpacked.', 6000);
+        $('#gameName').textContent = PICK_HINT;
+        $('#gamePick').classList.remove('set');
+        return;
+      }
+    }
     const g = (await PS.library.list()).find((x) => x.id === id);
     S.gameId = id;
     S.files = files;
@@ -266,34 +292,74 @@
     }
   };
 
+  // Progress breadcrumb for adding a game: if the phone kills the page, the next launch says where.
+  let crumbAt = 0;
+  function addCrumb(stage, game, p) {
+    const now = Date.now();
+    if (stage && now - crumbAt < 1500 && p < 1) return;
+    crumbAt = now;
+    try {
+      if (stage) localStorage.setItem('phostation.adding', JSON.stringify({ stage, game, p: Math.round(p * 100), at: now }));
+      else localStorage.removeItem('phostation.adding');
+    } catch (e) {}
+  }
+
   // Unpack once, then compress raw discs to .pbp so the game is small and quick to load from then on.
-  async function addArchive(file, status) {
+  // Everything is written to storage as it's produced, so memory stays low.
+  // replaceId: convert an archive that's already in the games list, keeping its place and settings.
+  async function addArchive(file, status, replaceId) {
     const srcSig = `archive:${file.name}:${file.size}`;
-    const known = await PS.library.find(srcSig);
-    if (known) return known;
+    if (!replaceId) {
+      const known = await PS.library.find(srcSig);
+      if (known) return known;
+    }
     const title = file.name.replace(/\.(zip|7z|rar)$/i, '').replace(/\s*\(disc 1\)\s*/i, ' ').trim();
     const multitap = $('#multitapChk').checked;
+    const id = replaceId || PS.library.newId();
+    const rawDir = 'g-' + id, pbpDir = 'pbp-' + id;
+    const save = (files, dir) => replaceId
+      ? PS.library.replaceFiles(id, files, dir).then(async () => (await PS.library.list()).find((g) => g.id === id))
+      : PS.library.add(files, multitap, { id, opfsDir: dir, title, srcSig });
     S.busy = true;
     requestWakeLock();
     try {
       let files;
       status('Unpacking…');
+      addCrumb('unpack', title, 0);
       try {
-        files = await PS.unpack.extract(file, (p) => status(`Unpacking ${Math.round(p * 100)}%. Keep this screen open.`));
+        files = await PS.unpack.extract(file, rawDir, (p) => {
+          addCrumb('unpack', title, p);
+          status(`Unpacking ${Math.round(p * 100)}%. Keep this screen open.`);
+        });
       } catch (err) { err.archive = true; throw err; }
+      const rawOnDisk = files.every((f) => f.__opfs === rawDir);
+
       if (PS.shrink.canShrink(files)) {
-        const id = PS.library.newId();
         try {
-          const r = await PS.shrink.toPbp(files, title, 'pbp-' + id, (p, extra) =>
-            status(`Compressing ${Math.round(p * 100)}%${extra ? ', ' + extra : ''}. Keep this screen open.`));
-          return await PS.library.add(r.files, multitap, { id, opfsDir: r.opfs ? 'pbp-' + id : null, title, srcSig });
+          addCrumb('compress', title, 0);
+          const r = await PS.shrink.toPbp(files, title, pbpDir, (p, extra) => {
+            addCrumb('compress', title, p);
+            status(`Compressing ${Math.round(p * 100)}%${extra ? ', ' + extra : ''}. Keep this screen open.`);
+          });
+          status('Saving to your games…');
+          const entry = await save(r.files, r.opfs ? pbpDir : null);
+          await PS.shrink.removeDir(rawDir);                // unpacked copy no longer needed
+          if (!r.opfs) await PS.shrink.removeDir(pbpDir);    // temporary chunks, now copied into the games list
+          return entry;
         } catch (err) {
+          await PS.shrink.removeDir(pbpDir);
           toast('Couldn\u2019t compress it, so it\u2019s saved unpacked instead.', 4000);
         }
       }
       status('Saving to your games…');
-      return await PS.library.add(files, multitap, { title, srcSig });
+      const entry = await save(files, rawOnDisk ? rawDir : null);
+      if (!rawOnDisk) await PS.shrink.removeDir(rawDir);
+      return entry;
+    } catch (err) {
+      await PS.shrink.removeDir(rawDir);
+      throw err;
     } finally {
+      addCrumb(null);
       S.busy = false;
     }
   }
