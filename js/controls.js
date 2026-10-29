@@ -8,6 +8,8 @@
   let root = null, opts = {};
   const pointers = new Map();
   let touch = ZERO(), pad = ZERO(), kb = 0, out = ZERO();
+  // Turbo: held turbo buttons flick on/off about 15 times a second.
+  let turboMask = 0, turboPhase = true, turboTimer = null, rawHeld = 0, paintedRaw = -1;
   let bitEls = [];
   let dpadEls = [];
 
@@ -31,7 +33,7 @@
   }
 
   // ---------- hit testing ----------
-  const SEL = '[data-btn],[data-dpad],[data-stick],[data-act]';
+  const SEL = '[data-btn],[data-dpad],[data-stick],[data-act],[data-hold]';
   function targetAt(x, y) {
     const el = document.elementFromPoint(x, y);
     return el && root.contains(el) ? el.closest(SEL) : null;
@@ -78,26 +80,34 @@
   }
 
   function merge() {
-    const b = touch.b | pad.b | kb;
+    const raw = touch.b | pad.b | kb;
+    const newlyTurbo = raw & ~rawHeld & turboMask;
+    rawHeld = raw;
+    if (newlyTurbo) turboPhase = true; // respond on the first frame of a press
+    if (raw & turboMask) {
+      if (!turboTimer) turboTimer = setInterval(() => { turboPhase = !turboPhase; merge(); }, 33);
+    } else if (turboTimer) { clearInterval(turboTimer); turboTimer = null; }
+    const b = (raw & ~turboMask) | (turboPhase ? raw & turboMask : 0);
     const a = [0, 1, 2, 3].map((k) => (Math.abs(pad.a[k]) > Math.abs(touch.a[k]) ? pad.a[k] : touch.a[k]));
+    if (raw !== paintedRaw) { paintedRaw = raw; paint(); }
     if (b === out.b && a.every((v, k) => v === out.a[k])) return;
     out = { b, a };
-    paint();
     opts.onChange && opts.onChange(out);
   }
 
   function paint() {
-    bitEls.forEach(({ el, mask }) => el.classList.toggle('on', (out.b & mask) === mask && mask !== 0));
+    bitEls.forEach(({ el, mask }) => el.classList.toggle('on', (rawHeld & mask) === mask && mask !== 0));
     dpadEls.forEach((el) => {
       const [U, D, L, R] = (el.dataset.dpad || '4,5,6,7').split(',').map((n) => (n === '' ? 0 : 1 << +n));
-      el.classList.toggle('u', !!(out.b & U)); el.classList.toggle('d', !!(out.b & D));
-      el.classList.toggle('l', !!(out.b & L)); el.classList.toggle('r', !!(out.b & R));
+      el.classList.toggle('u', !!(rawHeld & U)); el.classList.toggle('d', !!(rawHeld & D));
+      el.classList.toggle('l', !!(rawHeld & L)); el.classList.toggle('r', !!(rawHeld & R));
     });
   }
 
   function index() {
     bitEls = [...root.querySelectorAll('[data-btn]')].map((el) => ({ el, mask: maskOf(el.dataset.btn) }));
     dpadEls = [...root.querySelectorAll('[data-dpad]')];
+    paintedRaw = -1;
     pointers.clear();
     touch = ZERO();
     merge();
@@ -108,6 +118,13 @@
     if (!t) return;
     e.preventDefault();
     try { t.setPointerCapture(e.pointerId); } catch (err) {}
+    if (t.dataset.hold) {
+      buzz();
+      t.classList.add('on');
+      pointers.set(e.pointerId, { id: e.pointerId, kind: 'hold', el: t, bits: 0 });
+      opts.onAction && opts.onAction(t.dataset.hold, true);
+      return;
+    }
     if (t.dataset.act) {
       buzz();
       t.classList.add('on');
@@ -129,7 +146,7 @@
   }
   function onMove(e) {
     const p = pointers.get(e.pointerId);
-    if (!p) return;
+    if (!p || p.kind === 'hold') return;
     e.preventDefault();
     update(p, e.clientX, e.clientY);
     recompute();
@@ -137,6 +154,12 @@
   function onUp(e) {
     const p = pointers.get(e.pointerId);
     if (!p) return;
+    if (p.kind === 'hold') {
+      p.el.classList.remove('on');
+      pointers.delete(e.pointerId);
+      opts.onAction && opts.onAction(p.el.dataset.hold, false);
+      return;
+    }
     if (p.kind === 'stick') {
       p.el.classList.remove('on');
       const knob = p.el.querySelector('.knob');
@@ -189,7 +212,7 @@
   addEventListener('keyup', onKey);
 
   // ---------- layouts ----------
-  function renderDefault(withSticks) {
+  function renderDefault(withSticks, extras = {}) {
     root.className = 'pad pad-default' + (withSticks ? ' with-sticks' : '');
     root.innerHTML = `
       <div class="shoulders left"><b data-btn="${B.l2}">L2</b><b data-btn="${B.l1}">L1</b></div>
@@ -206,6 +229,7 @@
       <div class="mid">
         <b class="pill" data-btn="${B.select}">Select</b>
         <b class="pill" data-btn="${B.start}">Start</b>
+        ${extras.ff ? '<b class="pill ff" data-hold="ff" aria-label="Hold to fast forward"><svg viewBox="0 0 24 24"><path d="M3 6l8 6-8 6zM12 6l8 6-8 6z"/></svg></b>' : ''}
       </div>
       ${withSticks ? `
       <div class="stick s0" data-stick="0"><span class="knob"></span></div>
@@ -285,5 +309,7 @@
     root.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
-  PS.controls = { init, renderDefault, renderDelta, state: () => out, B };
+  function setTurbo(mask) { turboMask = mask | 0; merge(); }
+
+  PS.controls = { init, renderDefault, renderDelta, setTurbo, state: () => out, B };
 })();

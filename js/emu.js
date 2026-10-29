@@ -26,7 +26,7 @@
     } catch (e) {}
   }
 
-  const isArchive = (f) => /\.(zip|7z)$/i.test(f.name);
+  const isArchive = (f) => /\.(zip|7z|rar)$/i.test(f.name);
 
   // Decide which file the core should boot and whether we need a generated playlist.
   function plan(files) {
@@ -212,10 +212,22 @@
     return out;
   }
 
+  // Small JPEG of the current frame, used for save-state previews.
+  function thumb(w = 160) {
+    try {
+      const c = canvas();
+      if (!c || !c.width) return null;
+      const t = document.createElement('canvas');
+      t.width = w; t.height = Math.round((w * 3) / 4);
+      t.getContext('2d').drawImage(c, 0, 0, t.width, t.height);
+      return t.toDataURL('image/jpeg', 0.7);
+    } catch (e) { return null; }
+  }
+
   async function saveState(slot) {
     const g = gm();
-    if (!g) throw new Error('Game is not running');
-    await PS.store.set(`state:${gameName}:${slot}`, { at: Date.now(), data: g.getState() });
+    if (!g || !started) throw new Error('Game is not running');
+    await PS.store.set(`state:${gameName}:${slot}`, { at: Date.now(), data: g.getState(), thumb: thumb() });
   }
   async function loadState(slot) {
     const g = gm();
@@ -224,10 +236,52 @@
     g.loadState(rec.data);
     return true;
   }
-  async function stateInfo(slot) {
-    const rec = await PS.store.get(`state:${gameName}:${slot}`);
-    return rec ? rec.at : null;
+  // { at, thumb } or null
+  async function stateInfo(slot, name = gameName) {
+    const rec = await PS.store.get(`state:${name}:${slot}`);
+    return rec ? { at: rec.at, thumb: rec.thumb || null } : null;
   }
+
+  let paused = false;
+  function setPaused(on) {
+    const e = window.EJS_emulator;
+    const g = gm();
+    if (!e || !g) return paused;
+    try {
+      if (on && typeof e.pause === 'function') e.pause();
+      else if (!on && typeof e.play === 'function') e.play();
+      else g.toggleMainLoop(on ? 0 : 1);
+      paused = on;
+    } catch (err) {}
+    return paused;
+  }
+
+  // PNG of the current frame (host). Guests capture from the video instead.
+  function screenshot() {
+    return new Promise((res) => {
+      const c = canvas();
+      if (!c) return res(null);
+      c.toBlob((b) => res(b), 'image/png');
+    });
+  }
+
+  // GameShark codes: "80012345 0063" per line. Lines are joined with + as libretro expects.
+  function normalizeCheat(code) {
+    const lines = code.toUpperCase().split(/[\n+]/).map((l) => l.replace(/[^0-9A-F]/g, '')).filter(Boolean);
+    if (!lines.length || lines.some((l) => l.length !== 12)) return null;
+    return lines.map((l) => l.slice(0, 8) + ' ' + l.slice(8)).join('+');
+  }
+  function applyCheats(list) {
+    const g = gm();
+    if (!g || typeof g.setCheat !== 'function') return false;
+    try { if (typeof g.resetCheat === 'function') g.resetCheat(); } catch (e) {}
+    (list || []).forEach((c, i) => {
+      const code = normalizeCheat(c.code);
+      if (code) { try { g.setCheat(i, c.on ? 1 : 0, code); } catch (e) {} }
+    });
+    return true;
+  }
+  const cheatsSupported = () => { const g = gm(); return !!(g && typeof g.setCheat === 'function'); };
 
   function restart() { const g = gm(); g && g.restart(); }
   function setMultitap(on) {
@@ -237,13 +291,14 @@
     for (const k in o) { try { g.setVariable(k, o[k]); } catch (e) {} }
     try { g.restart(); } catch (e) {}
   }
-  function toggleFastForward() {
+  function setFastForward(on) {
     const g = gm();
     if (!g) return ff;
-    ff = !ff;
+    ff = !!on;
     try { g.toggleFastForward(ff ? 1 : 0); } catch (e) {}
     return ff;
   }
+  const toggleFastForward = () => setFastForward(!ff);
 
   // ---------- split-view math (shared by host stage and guest video) ----------
   const FULL = { x: 0, y: 0, w: 1, h: 1 };
@@ -258,22 +313,25 @@
         default: return FULL;
       }
     },
-    apply(area, frame, inner, r) {
+    // stretch: fill the whole area instead of keeping the 4:3 shape
+    apply(area, frame, inner, r, stretch) {
       const W = area.clientWidth, H = area.clientHeight;
       if (!W || !H) return;
       const asp = (4 * r.w) / (3 * r.h);
       let fw = W, fh = W / asp;
-      if (fh > H) { fh = H; fw = H * asp; }
+      if (stretch) fh = H;
+      else if (fh > H) { fh = H; fw = H * asp; }
       frame.style.width = fw + 'px';
       frame.style.height = fh + 'px';
-      const s = fw / (STAGE_W * r.w);
-      inner.style.transform = `scale(${s}) translate(${-r.x * STAGE_W}px, ${-r.y * STAGE_H}px)`;
+      const sx = fw / (STAGE_W * r.w), sy = fh / (STAGE_H * r.h);
+      inner.style.transform = `scale(${sx}, ${sy}) translate(${-r.x * STAGE_W}px, ${-r.y * STAGE_H}px)`;
     },
   };
 
   PS.emu = {
     load, setInput, releaseAll, captureStream, canvas, setPerf, measureFps, setUncapped, canUncap,
-    saveState, loadState, crumb, stateInfo, restart, setMultitap, toggleFastForward,
+    saveState, loadState, crumb, setFastForward, setPaused, screenshot, normalizeCheat, applyCheats, cheatsSupported,
+    get paused() { return paused; }, get gameName() { return gameName; }, stateInfo, restart, setMultitap, toggleFastForward,
     get started() { return started; },
     title: '',
   };

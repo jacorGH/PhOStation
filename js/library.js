@@ -12,20 +12,36 @@
   async function list() { return (await PS.store.get('games')) || []; }
   async function saveList(l) { await PS.store.set('games', l); }
 
-  async function add(files, multitap) {
-    const sig = files.map((f) => `${f.name}:${f.size}`).sort().join('|');
+  const newId = () => 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  const isDisc = (f) => /\.pbp$/i.test(f.name);
+
+  // With opfsDir, the .pbp discs already live in the private file system; only small extras
+  // (playlist, LibCrypt .sbi) are copied into the database.
+  async function record(files, opfsDir) {
+    if (!opfsDir) return { files };
+    const extra = await Promise.all(files.filter((f) => !isDisc(f)).map(async (f) => ({ name: f.name, blob: new Blob([await f.arrayBuffer()]) })));
+    return { opfs: opfsDir, names: files.filter(isDisc).map((f) => f.name), extra };
+  }
+  const meta = (files) => ({
+    sig: files.map((f) => `${f.name}:${f.size}`).sort().join('|'),
+    size: files.reduce((n, f) => n + f.size, 0),
+    count: files.length,
+    names: files.map((f) => f.name),
+  });
+
+  async function find(sig) { return (await list()).find((g) => g.sig === sig || g.srcSig === sig) || null; }
+
+  // opts: { id, opfsDir, title, srcSig } — srcSig remembers the archive a game came from.
+  async function add(files, multitap, opts = {}) {
+    const m = meta(files);
     const l = await list();
-    const existing = l.find((g) => g.sig === sig);
+    const existing = l.find((g) => g.sig === m.sig);
     if (existing) return existing;
-    const id = 'g' + Date.now().toString(36);
-    // Files are stored as-is; the browser keeps them on disk, not in memory.
-    await PS.store.set('game:' + id, { files });
+    const id = opts.id || newId();
+    await PS.store.set('game:' + id, await record(files, opts.opfsDir));
     const entry = {
-      id, sig,
-      title: stripExt(mainName(files)).replace(/\s*\(disc 1\)\s*/i, ' ').trim(),
-      size: files.reduce((n, f) => n + f.size, 0),
-      count: files.length,
-      names: files.map((f) => f.name),
+      id, ...m, srcSig: opts.srcSig || null,
+      title: (opts.title || stripExt(mainName(files))).replace(/\s*\(disc 1\)\s*/i, ' ').trim(),
       added: Date.now(), played: 0, multitap: !!multitap,
     };
     l.unshift(entry);
@@ -40,7 +56,7 @@
     if (rec.opfs) {
       // shrunk discs live in private files; a multi-disc playlist is kept as text here
       const discs = await PS.shrink.readDir(rec.opfs, rec.names);
-      return discs.concat((rec.extra || []).map((x) => new File([x.text], x.name, { type: 'text/plain' })));
+      return discs.concat((rec.extra || []).map((x) => new File([x.blob || x.text], x.name)));
     }
     return rec.files;
   }
@@ -55,18 +71,9 @@
   }
 
   // Swap a game's files (e.g. after shrinking to .pbp) but keep its place, settings and history.
-  // With opfsDir, the files already live in the private file system and only their names are kept.
   async function replaceFiles(id, files, opfsDir) {
-    const m3u = files.filter((f) => /\.m3u$/i.test(f.name));
-    const discs = files.filter((f) => !/\.m3u$/i.test(f.name));
-    const extra = await Promise.all(m3u.map(async (f) => ({ name: f.name, text: await f.text() })));
-    await PS.store.set('game:' + id, opfsDir ? { opfs: opfsDir, names: discs.map((f) => f.name), extra } : { files });
-    await update(id, {
-      sig: files.map((f) => `${f.name}:${f.size}`).sort().join('|'),
-      size: files.reduce((n, f) => n + f.size, 0),
-      count: files.length,
-      names: files.map((f) => f.name),
-    });
+    await PS.store.set('game:' + id, await record(files, opfsDir));
+    await update(id, meta(files));
   }
 
   async function remove(id) {
@@ -76,5 +83,5 @@
     await saveList((await list()).filter((g) => g.id !== id));
   }
 
-  PS.library = { list, add, files, update, replaceFiles, remove };
+  PS.library = { list, add, find, newId, files, update, replaceFiles, remove };
 })();

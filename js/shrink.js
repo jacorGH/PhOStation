@@ -6,7 +6,7 @@
 
   // Which discs are in this set, and can we convert them?
   function discs(files) {
-    if (files.some((f) => /\.(chd|pbp|zip|7z|m3u)$/i.test(f.name))) return [];
+    if (files.some((f) => /\.(chd|pbp|zip|7z|rar)$/i.test(f.name))) return [];
     const cues = files.filter((f) => /\.cue$/i.test(f.name)).sort((a, b) => a.name.localeCompare(b.name));
     if (cues.length) return cues.map((c) => ({ cueName: c.name, label: stripExt(c.name) }));
     const raws = files.filter((f) => /\.(bin|img|iso)$/i.test(f.name));
@@ -40,9 +40,13 @@
         (p) => onProgress((i + p) / list.length, list.length > 1 ? `disc ${i + 1}/${list.length}` : ''));
       out.push(r.file);
       opfs = opfs && r.opfs;
+      // LibCrypt patch files must sit next to the disc with the same name to keep protected games booting.
+      const sbi = files.find((f) => /\.sbi$/i.test(f.name) && stripExt(f.name).toLowerCase() === list[i].label.toLowerCase());
+      if (sbi) out.push(new File([sbi], stripExt(r.file.name) + '.sbi'));
       ratio += r.ratio / list.length;
     }
-    if (out.length > 1) out.push(new File([out.map((f) => f.name).join('\n')], safe(title) + '.m3u', { type: 'text/plain' }));
+    const pbps = out.filter((f) => /\.pbp$/i.test(f.name));
+    if (pbps.length > 1) out.push(new File([pbps.map((f) => f.name).join('\n')], safe(title) + '.m3u', { type: 'text/plain' }));
     return { files: out, ratio, opfs };
   }
 

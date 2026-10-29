@@ -91,7 +91,7 @@
     const members = new Map();
     const self = { clientId: 'host', name: cleanName(name), role: 'player', port: 0, peerId: hostId, voice: false, connected: true, isHost: true };
     members.set('host', self);
-    const st = { view: 'full', lockViews: true, locked: false, maxPorts: 2, quality: 'auto', running: false };
+    const st = { view: 'full', lockViews: true, locked: false, maxPorts: 2, quality: 'auto', running: false, paused: false };
     let peer = null, streamFactory = null, streamP = null, canvasW = 640, destroyed = false;
     // The stream is only created once someone is watching, so solo play doesn't pay for video encoding.
     const getStream = () => streamP || (streamP = Promise.resolve().then(streamFactory));
@@ -302,6 +302,7 @@
         broadcast();
       },
       setView(v) { st.view = v; broadcast(); },
+      setPaused(b) { st.paused = !!b; broadcast(); },
       setLockViews(b) { st.lockViews = !!b; broadcast(); },
       setLocked(b) { st.locked = !!b; broadcast(); },
       setMaxPorts(n) {

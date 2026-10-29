@@ -31,6 +31,7 @@
       <input id="nameInput" maxlength="16" autocomplete="off" autocapitalize="words" placeholder="Player">
     </label>
     <div class="choices">
+      <button class="big continue" id="continueBtn" hidden><span class="thumb" id="continueThumb"></span><span class="txt"><b id="continueTitle">Continue</b><small id="continueSub"></small></span></button>
       <button class="big primary" id="goHost"><b>Host a game</b><small>You run the disc and invite up to three friends</small></button>
       <button class="big" id="goJoin"><b>Join a room</b><small>Type the 5-letter code your friend sent</small></button>
     </div>
@@ -58,7 +59,7 @@
     <label class="drop" id="gamePick">
       <input type="file" id="gameFile" multiple>
       <b id="pickTitle">Choose a game</b>
-      <span id="gameName">.chd, .pbp, .iso, .bin + .cue, or a .zip. It stays in your games list.</span>
+      <span id="gameName">.chd, .pbp, .bin + .cue, .iso, or a .zip, .7z or .rar. It stays in your games list.</span>
     </label>
     <div class="drop small" id="biosPick">
       <label><input type="file" id="biosFile"><b>BIOS file</b><span id="biosName">Optional. The built-in BIOS runs most games.</span></label>
@@ -116,6 +117,14 @@
     <div id="frame">
       <div id="game"></div>
       <video id="remote" playsinline autoplay muted></video>
+      <div id="fx" aria-hidden="true"></div>
+    </div>
+    <div id="pausedBanner" hidden><svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg><span>Paused</span></div>
+    <div id="resumeBar" hidden>
+      <span class="thumb" id="resumeThumb"></span>
+      <span class="txt"><b>Pick up where you left off?</b><small id="resumeWhen"></small></span>
+      <button class="mini" id="resumeNo">Start fresh</button>
+      <button class="mini primary" id="resumeYes">Continue</button>
     </div>
     <div id="waiting" hidden><span class="spinner"></span><p></p></div>
     <button id="tapSound" hidden>Tap for sound</button>
@@ -138,6 +147,7 @@
 <script src="js/emu.js"></script>
 <script src="js/library.js"></script>
 <script src="js/shrink.js"></script>
+<script src="js/unpack.js"></script>
 <script src="js/controls.js"></script>
 <script src="js/delta.js"></script>
 <script src="js/net.js"></script>

@@ -12,7 +12,7 @@ Push this folder to a GitHub repo and turn on GitHub Pages. Open the Pages URL o
 
 **Friends:** Join a room → type the code (or open the invite link) → Play or Watch.
 
-Disc formats: `.chd` and `.pbp` are best on phones (single file, smaller). `.iso`, single `.bin`, and `.zip` work too. For `.bin`/`.cue`, select the `.cue` and all its `.bin` files together. Selecting several `.cue` files builds a multi-disc playlist.
+Disc formats: `.chd` and `.pbp` are best on phones (single file, smaller). `.iso` and single `.bin` work too. `.zip`, `.7z` and `.rar` archives are unpacked once when you add them, then compressed to `.pbp` automatically, so they load fast every time after that. Readme files and other junk inside the archive are skipped. For `.bin`/`.cue`, select the `.cue` and all its `.bin` files together. Selecting several `.cue` files builds a multi-disc playlist.
 
 Games you pick are saved to **Your games** on that device, so next time you just tap one. Removing a game from the list doesn't touch the original file.
 
@@ -31,7 +31,15 @@ BIOS is optional. The core's built-in BIOS runs most games, and a real BIOS (e.g
 - Voice chat mesh between everyone with the mic on
 - Auto-reconnect that holds your port for 2 minutes
 - Connection stats (ping, fps, stream tier) and automatic stream quality per player, or a fixed tier
-- Save states (3 slots + quick save), restart, fast forward, and the full EmulatorJS menu on request
+- Save states (3 slots + quick save) with picture previews, restart, fast forward, and the full EmulatorJS menu on request
+- Autosave every 3 minutes and whenever the app goes to the background. Starting a game offers to pick up where you left off, and the home screen has a one-tap Continue for your last game.
+- Pause for everyone (friends see a Paused banner). Solo games pause automatically while the menu is open.
+- Hold-to-fast-forward button on the pad for the host
+- Turbo buttons: pick any of Cross, Circle, Square, Triangle, L1, R1, L2, R2 to auto-repeat while held
+- Controller size and opacity sliders
+- Display: Sharp, Smooth, Scanlines or CRT look, and Original 4:3 or Fill screen. Works for guests too.
+- GameShark cheats, saved per game
+- Screenshots to the share sheet (host and guests)
 - Bluetooth controllers and keyboard for guests (Z ✕, X ○, A □, S △, Q/W L1/R1, 1/2 L2/R2, Enter Start, Shift Select)
 
 ## Good to know
@@ -52,6 +60,7 @@ css/app.css         styles
 js/boot.js          capture/audio hooks, prefs, storage (loads before EmulatorJS)
 js/library.js       saved games (IndexedDB + private files)
 js/shrink.js        .pbp conversion controller
+js/unpack.js        .zip/.7z/.rar unpacking
 js/pbp-worker.js    .pbp encoder (runs in a background worker)
 js/emu.js           EmulatorJS wrapper, input injection, save states, split-view math
 js/controls.js      touch pad, Delta skin layout, gamepad, keyboard, haptics

@@ -47,6 +47,38 @@
   $('#nameInput').value = P.name || '';
   $('#nameInput').addEventListener('input', (e) => (P.name = e.target.value.trim()));
   $('#goHost').onclick = startHosting;
+
+  // One-tap "Continue" for the last game played on this phone.
+  async function renderContinue() {
+    const btn = $('#continueBtn');
+    const g = (await PS.library.list().catch(() => [])).find((x) => x.played);
+    if (!g) { btn.hidden = true; return; }
+    btn.hidden = false;
+    btn.dataset.id = g.id;
+    $('#continueTitle').textContent = `Continue ${g.title}`;
+    const info = g.stateKey ? await PS.emu.stateInfo('auto', g.stateKey).catch(() => null) : null;
+    $('#continueSub').textContent = info ? `Resumes from ${ago(info.at)}` : 'Opens your room and starts the game';
+    $('#continueThumb').style.backgroundImage = info && info.thumb ? `url(${info.thumb})` : '';
+    $('#continueThumb').hidden = !(info && info.thumb);
+  }
+  $('#continueBtn').onclick = async () => {
+    const id = $('#continueBtn').dataset.id;
+    startHosting();
+    await selectGame(id);
+    if (S.gameId !== id) return;
+    S.autoResume = true;
+    $('#startBtn').click();
+  };
+  function ago(t) {
+    const m = Math.round((Date.now() - t) / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m} min ago`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `${h} hr ago`;
+    const d = Math.round(h / 24);
+    return d === 1 ? 'yesterday' : `${d} days ago`;
+  }
+  renderContinue();
   $('#goJoin').onclick = () => { show('join'); setTimeout(() => $('#codeInput').focus(), 50); };
   $('#goSettings').onclick = () => { renderSettings(); show('settings'); };
   $$('[data-back]').forEach((b) => (b.onclick = () => {
@@ -184,19 +216,7 @@
   // Hand the .pbp to the share sheet (Save to Files) or download it.
   async function saveGame(id) {
     const files = await PS.library.files(id).catch(() => null);
-    if (!files) return;
-    try {
-      if (navigator.canShare && navigator.canShare({ files })) { await navigator.share({ files }); return; }
-    } catch (e) { if (e.name === 'AbortError') return; }
-    for (const f of files) {
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(f);
-      a.download = f.name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
-    }
+    if (files) await shareFiles(files);
   }
 
   async function selectGame(id) {
@@ -211,30 +231,72 @@
       if (!g.names) PS.library.update(id, { names: files.map((f) => f.name) }).catch(() => {});
     }
     $('#gamePick').classList.remove('set');
-    $('#gameName').textContent = '.chd, .pbp, .iso, .bin + .cue, or a .zip. It stays in your games list.';
+    $('#gameName').textContent = PICK_HINT;
     $('#startBtn').disabled = false;
     renderLibrary();
   }
 
+  const PICK_HINT = '.chd, .pbp, .bin + .cue, .iso, or a .zip, .7z or .rar. It stays in your games list.';
   $('#gameFile').onchange = async (e) => {
     const fs = [...e.target.files];
     e.target.value = '';
-    if (!fs.length) return;
+    if (!fs.length || S.busy) return;
     if (fs.length === 1 && /\.cue$/i.test(fs[0].name)) { toast('Select the .cue together with its .bin file(s)', 4000); return; }
-    $('#gameName').textContent = 'Saving to your games…';
+    const status = (t) => ($('#gameName').textContent = t);
     $('#gamePick').classList.add('set');
     try {
-      const entry = await PS.library.add(fs, $('#multitapChk').checked);
+      const archive = fs.length === 1 && (await PS.unpack.kind(fs[0]));
+      let entry;
+      if (archive) entry = await addArchive(fs[0], status);
+      else { status('Saving to your games…'); entry = await PS.library.add(fs, $('#multitapChk').checked); }
       await selectGame(entry.id);
       toast(`Saved \u201c${entry.title}\u201d to your games`);
     } catch (err) {
+      if (err.archive) {
+        toast(err.message, 6000);
+        status(PICK_HINT);
+        $('#gamePick').classList.remove('set');
+        return;
+      }
       // Storage full or blocked: still let them play this session.
       S.gameId = null;
       S.files = fs;
       $('#startBtn').disabled = false;
-      $('#gameName').textContent = `${fs[0].name}${fs.length > 1 ? ` + ${fs.length - 1} more` : ''} (not saved, phone storage is full)`;
+      status(`${fs[0].name}${fs.length > 1 ? ` + ${fs.length - 1} more` : ''} (not saved, phone storage is full)`);
     }
   };
+
+  // Unpack once, then compress raw discs to .pbp so the game is small and quick to load from then on.
+  async function addArchive(file, status) {
+    const srcSig = `archive:${file.name}:${file.size}`;
+    const known = await PS.library.find(srcSig);
+    if (known) return known;
+    const title = file.name.replace(/\.(zip|7z|rar)$/i, '').replace(/\s*\(disc 1\)\s*/i, ' ').trim();
+    const multitap = $('#multitapChk').checked;
+    S.busy = true;
+    requestWakeLock();
+    try {
+      let files;
+      status('Unpacking…');
+      try {
+        files = await PS.unpack.extract(file, (p) => status(`Unpacking ${Math.round(p * 100)}%. Keep this screen open.`));
+      } catch (err) { err.archive = true; throw err; }
+      if (PS.shrink.canShrink(files)) {
+        const id = PS.library.newId();
+        try {
+          const r = await PS.shrink.toPbp(files, title, 'pbp-' + id, (p, extra) =>
+            status(`Compressing ${Math.round(p * 100)}%${extra ? ', ' + extra : ''}. Keep this screen open.`));
+          return await PS.library.add(r.files, multitap, { id, opfsDir: r.opfs ? 'pbp-' + id : null, title, srcSig });
+        } catch (err) {
+          toast('Couldn\u2019t compress it, so it\u2019s saved unpacked instead.', 4000);
+        }
+      }
+      status('Saving to your games…');
+      return await PS.library.add(files, multitap, { title, srcSig });
+    } finally {
+      S.busy = false;
+    }
+  }
 
   async function loadSavedBios() {
     try {
@@ -291,7 +353,7 @@
   // Stand-in when PeerJS is unavailable: the game still runs locally on P1.
   function soloNet() {
     return {
-      voiceOn: false, setMaxPorts() {}, setRunning() {}, destroy() {}, unlockAudio() {}, roster: () => [],
+      voiceOn: false, setMaxPorts() {}, setRunning() {}, setPaused() {}, destroy() {}, unlockAudio() {}, roster: () => [],
       voiceStart() { throw new Error('Voice needs the lobby connection.'); }, voiceStop() {},
     };
   }
@@ -301,6 +363,14 @@
     applyView();
     // Video is only captured and encoded once a friend is actually connected.
     S.net.setRunning(() => PS.emu.captureStream());
+    if (S.gameId) {
+      PS.library.update(S.gameId, { stateKey: PS.emu.gameName }).catch(() => {});
+      const g = (await PS.library.list().catch(() => [])).find((x) => x.id === S.gameId);
+      S.cheats = (g && g.cheats) || [];
+    } else S.cheats = S.cheats || [];
+    if (S.cheats.some((c) => c.on)) setTimeout(() => PS.emu.applyCheats(S.cheats), 1500);
+    offerResume();
+    startAutosave();
     // iPhone Low Power Mode limits the screen to 30 fps, and the emulator runs once per screen
     // refresh, so games play at half speed. Switch the emulator to its own 60 fps timer.
     setTimeout(async () => {
@@ -312,6 +382,97 @@
         : 'Your screen is limited to 30 fps, which halves game speed. Turn off Low Power Mode in Settings, Battery.', 7000);
     }, 4000);
   }
+
+  // ---------- resume & autosave ----------
+  async function offerResume() {
+    const info = await PS.emu.stateInfo('auto').catch(() => null);
+    if (!info) return;
+    if (S.autoResume) {
+      S.autoResume = false;
+      setTimeout(async () => { if (await PS.emu.loadState('auto')) toast(`Continued from ${ago(info.at)}`); }, 600);
+      return;
+    }
+    S.resumePending = true;
+    $('#resumeWhen').textContent = `Saved automatically ${ago(info.at)}`;
+    $('#resumeThumb').style.backgroundImage = info.thumb ? `url(${info.thumb})` : '';
+    $('#resumeBar').hidden = false;
+    clearTimeout(S.resumeT);
+    S.resumeT = setTimeout(hideResume, 20000);
+  }
+  function hideResume() { $('#resumeBar').hidden = true; S.resumePending = false; }
+  $('#resumeYes').onclick = async () => {
+    hideResume();
+    toast((await PS.emu.loadState('auto')) ? 'Continued' : 'That save couldn’t be loaded');
+  };
+  $('#resumeNo').onclick = hideResume;
+
+  // Saves every 3 minutes and whenever the app is sent to the background, so a closed tab
+  // or a crash never costs more than a few minutes.
+  let autosaveOn = false;
+  async function autosave() {
+    if (S.role !== 'host' || !S.running || S.resumePending || PS.emu.paused && S.autoPaused) return;
+    try { await PS.emu.saveState('auto'); } catch (e) {}
+  }
+  function startAutosave() {
+    if (autosaveOn) return;
+    autosaveOn = true;
+    setInterval(autosave, 180000);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') autosave(); });
+    addEventListener('pagehide', autosave);
+  }
+
+  // ---------- pause ----------
+  function setPause(on) {
+    if (S.role !== 'host' || !S.running) return;
+    PS.emu.setPaused(on);
+    S.net.setPaused && S.net.setPaused(on);
+    $('#pausedBanner').hidden = !on;
+  }
+  const guestsConnected = () => S.roster.some((m) => !m.isHost && m.connected);
+
+  // ---------- screenshots & sharing ----------
+  async function shareFiles(files) {
+    try {
+      if (navigator.canShare && navigator.canShare({ files })) { await navigator.share({ files }); return; }
+    } catch (e) { if (e.name === 'AbortError') return; }
+    for (const f of files) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(f);
+      a.download = f.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    }
+  }
+  async function takeScreenshot() {
+    let blob = null;
+    if (S.role === 'host') blob = await PS.emu.screenshot();
+    else {
+      const v = $('#remote');
+      if (v.videoWidth) {
+        const c = document.createElement('canvas');
+        c.width = v.videoWidth; c.height = v.videoHeight;
+        c.getContext('2d').drawImage(v, 0, 0);
+        blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+      }
+    }
+    if (!blob) { toast('Nothing to capture yet'); return; }
+    const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', '.');
+    await shareFiles([new File([blob], `${PS.emu.title || 'PhoStation'} ${stamp}.png`, { type: 'image/png' })]);
+  }
+
+  // ---------- display & controller look ----------
+  function applyLook() {
+    const play = $('#play');
+    play.dataset.filter = P.filter || 'sharp';
+    const pad = $('#pad');
+    pad.style.setProperty('--pad-scale', P.padSize || 1);
+    pad.style.setProperty('--pad-alpha', P.padAlpha == null ? 1 : P.padAlpha);
+    $('#skinBg').style.opacity = P.padAlpha == null ? 1 : P.padAlpha;
+    PS.controls.setTurbo(P.turbo || 0);
+  }
+  applyLook();
 
   // ---------- join ----------
   $('#codeInput').addEventListener('input', (e) => {
@@ -401,6 +562,7 @@
       if (S.role === 'host' && me.port != null && old !== me.port) PS.emu.setInput(me.port, PS.controls.state());
     }
     if (S.lockViews) S.localFull = false;
+    if (S.role === 'guest') $('#pausedBanner').hidden = !msg.paused;
     $('#micBtn').classList.toggle('on', !!(S.net && S.net.voiceOn));
     applyView();
     const key = JSON.stringify([msg.roster.map((m) => [m.clientId, m.name, m.port, m.voice, m.connected]), msg.view, msg.lockViews, msg.locked, msg.maxPorts, msg.quality, msg.running]);
@@ -411,7 +573,7 @@
   function applyView() {
     const inner = S.role === 'host' ? $('#game') : $('#remote');
     const full = S.ejsUi || S.myPort == null || S.localFull;
-    PS.view.apply($('#screen'), $('#frame'), inner, full ? PS.view.FULL : PS.view.rect(S.view, S.myPort));
+    PS.view.apply($('#screen'), $('#frame'), inner, full ? PS.view.FULL : PS.view.rect(S.view, S.myPort), P.fit === 'stretch');
   }
   new ResizeObserver(() => applyView()).observe($('#screen'));
 
@@ -433,7 +595,7 @@
       play.classList.remove('delta');
       scr.removeAttribute('style');
       $('#skinBg').innerHTML = '';
-      PS.controls.renderDefault(S.skinId === 'sticks');
+      PS.controls.renderDefault(S.skinId === 'sticks', { ff: S.role === 'host' });
     } else {
       const skin = await PS.delta.load(S.skinId).catch(() => null);
       if (!skin) { S.skinId = P.skin = 'default'; return renderPad(); }
@@ -449,9 +611,10 @@
     rT = setTimeout(() => { if (document.body.dataset.view === 'play' && $('#play').classList.contains('delta')) renderPad(); }, 120);
   });
 
-  async function handleAction(a) {
+  async function handleAction(a, down) {
     if (a === 'menu') return openSheet();
     if (S.role !== 'host' || !S.running) return;
+    if (a === 'ff' && down !== undefined) { S.ff = PS.emu.setFastForward(down); return; } // hold to fast forward
     try {
       if (a === 'qs') { await PS.emu.saveState(0); toast('Quick save done'); }
       if (a === 'ql') toast((await PS.emu.loadState(0)) ? 'Quick save loaded' : 'No quick save yet');
@@ -484,8 +647,16 @@
 
   // ---------- sheet ----------
   const sheetOpen = () => !$('#sheetWrap').hidden;
-  function openSheet() { renderSheet(); $('#sheetWrap').hidden = false; }
-  function closeSheet() { $('#sheetWrap').hidden = true; }
+  // Solo games pause while the menu is open.
+  function openSheet() {
+    if (S.role === 'host' && S.running && !PS.emu.paused && !guestsConnected()) { S.autoPaused = true; setPause(true); }
+    renderSheet();
+    $('#sheetWrap').hidden = false;
+  }
+  function closeSheet() {
+    $('#sheetWrap').hidden = true;
+    if (S.autoPaused) { S.autoPaused = false; setPause(false); }
+  }
   $('#menuBtn').onclick = openSheet;
 
   function portsStrip() {
@@ -541,7 +712,14 @@
     const host = S.role === 'host';
     const st = S.hostState || {};
     const views = [['full', 'Whole screen'], ['h2', 'Top / bottom'], ['v2', 'Left / right'], ['q4', 'Quarters']];
-    let html = `<h3>Players</h3>${portsStrip()}<div id="sheetPlayers">${playerRows()}</div>`;
+    const keep = { name: $('#cheatName') && $('#cheatName').value, code: $('#cheatCode') && $('#cheatCode').value };
+    let html = '';
+    if (host && S.running) {
+      const p = PS.emu.paused && !S.autoPaused;
+      html += `<div class="row2 top"><button class="ghost ${p ? 'on' : ''}" data-do="pause">${p ? 'Resume game' : 'Pause for everyone'}</button>
+        <button class="ghost" data-do="shot">Screenshot</button></div>`;
+    } else if (!host) html += `<button class="ghost wide top" data-do="shot">Screenshot</button>`;
+    html += `<h3>Players</h3>${portsStrip()}<div id="sheetPlayers">${playerRows()}</div>`;
 
     html += `<h3>Voice</h3><button class="ghost wide ${S.net && S.net.voiceOn ? 'on' : ''}" data-do="voice">${S.net && S.net.voiceOn ? 'Turn voice chat off' : 'Turn voice chat on'}</button>`;
 
@@ -559,10 +737,13 @@
         <button class="ghost wide" data-do="share">Share invite</button>`;
       if (S.running) {
         html += `<h3>Save states</h3><div class="slots">`;
-        for (let i = 1; i <= 3; i++) {
-          const at = await PS.emu.stateInfo(i).catch(() => null);
-          html += `<div class="slot"><span>Slot ${i}<small>${at ? new Date(at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'Empty'}</small></span>
-            <button class="mini" data-do="save" data-slot="${i}">Save</button><button class="mini" data-do="load" data-slot="${i}" ${at ? '' : 'disabled'}>Load</button></div>`;
+        for (const i of ['auto', 1, 2, 3]) {
+          const info = await PS.emu.stateInfo(i).catch(() => null);
+          const label = i === 'auto' ? 'Autosave' : `Slot ${i}`;
+          html += `<div class="slot"><span class="thumb" ${info && info.thumb ? `style="background-image:url(${info.thumb})"` : ''}></span>
+            <span>${label}<small>${info ? ago(info.at) : 'Empty'}</small></span>
+            ${i === 'auto' ? '' : `<button class="mini" data-do="save" data-slot="${i}">Save</button>`}
+            <button class="mini" data-do="load" data-slot="${i}" ${info ? '' : 'disabled'}>Load</button></div>`;
         }
         html += `</div><h3>Speed</h3>
           <div class="seg quad">${['quality', 'balanced', 'fast', 'turbo'].map((v) => `<button data-do="perf" data-v="${v}" class="${S.perf === v ? 'on' : ''}">${v[0].toUpperCase() + v.slice(1)}</button>`).join('')}</div>
@@ -572,14 +753,50 @@
           <button class="ghost" data-do="ff">${S.ff ? 'Stop fast forward' : 'Fast forward'}</button>
           <button class="ghost" data-do="restart">Restart</button></div>
           <button class="ghost wide" data-do="ejs">${S.ejsUi ? 'Hide emulator menu' : 'Show emulator menu'}</button>`;
+        html += cheatsHtml();
       }
     } else if (!st.lockViews && S.myPort != null && st.view !== 'full') {
       html += `<h3>View</h3><label class="toggle"><input type="checkbox" data-do="localfull" ${S.localFull ? 'checked' : ''}><span><b>Show the whole screen</b><small>The host allows it in this room</small></span></label>`;
     }
 
-    html += `<h3>Controller</h3>${await skinsHtml()}`;
+    html += displayHtml();
+    html += `<h3>Controller</h3>${await skinsHtml()}${padLookHtml()}`;
     html += `<button class="big danger" data-do="leave"><b>${host ? 'End session' : 'Leave room'}</b></button>`;
     $('#sheetBody').innerHTML = html;
+    if (keep.name && $('#cheatName')) $('#cheatName').value = keep.name;
+    if (keep.code && $('#cheatCode')) $('#cheatCode').value = keep.code;
+  }
+
+  function displayHtml() {
+    const f = P.filter || 'sharp', fit = P.fit || '43';
+    const opt = (k, v, l, cur) => `<button data-do="${k}" data-v="${v}" class="${cur === v ? 'on' : ''}">${l}</button>`;
+    return `<h3>Display</h3>
+      <div class="seg quad">${opt('filter', 'sharp', 'Sharp', f)}${opt('filter', 'smooth', 'Smooth', f)}${opt('filter', 'scan', 'Scanlines', f)}${opt('filter', 'crt', 'CRT', f)}</div>
+      <div class="seg">${opt('fit', '43', 'Original 4:3', fit)}${opt('fit', 'stretch', 'Fill screen', fit)}</div>`;
+  }
+
+  const TURBO = [['Cross', 0], ['Circle', 8], ['Square', 1], ['Triangle', 9], ['L1', 10], ['R1', 11], ['L2', 12], ['R2', 13]];
+  function padLookHtml() {
+    const t = P.turbo || 0;
+    return `<h3>Turbo buttons</h3><p class="note">Held turbo buttons press themselves about 15 times a second.</p>
+      <div class="chips">${TURBO.map(([l, b]) => `<button data-do="turbo" data-b="${b}" class="chip-t ${t & (1 << b) ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <label class="range"><span>Controller size</span><input type="range" min="0.75" max="1.3" step="0.05" value="${P.padSize || 1}" data-do="padsize"></label>
+      <label class="range"><span>Controller opacity</span><input type="range" min="0.25" max="1" step="0.05" value="${P.padAlpha == null ? 1 : P.padAlpha}" data-do="padalpha"></label>`;
+  }
+
+  function cheatsHtml() {
+    if (!PS.emu.cheatsSupported()) return '';
+    const rows = (S.cheats || []).map((c, i) => `<div class="cheat"><label class="toggle"><input type="checkbox" data-do="cheat" data-i="${i}" ${c.on ? 'checked' : ''}>
+      <span><b>${esc(c.name)}</b><small>${esc(c.code.split(/\n|\+/)[0])}${c.code.split(/\n|\+/).length > 1 ? ' …' : ''}</small></span></label>
+      <button class="mini" data-do="delcheat" data-i="${i}" aria-label="Delete cheat">×</button></div>`).join('');
+    return `<h3>Cheats</h3><p class="note">GameShark codes, one per line, like 80012345 0063. Saved for this game.</p>${rows}
+      <label class="field"><span>Name</span><input id="cheatName" placeholder="Infinite health" autocomplete="off"></label>
+      <label class="field"><span>Code</span><textarea id="cheatCode" rows="3" placeholder="80012345 0063" autocapitalize="characters" spellcheck="false"></textarea></label>
+      <button class="ghost wide" data-do="addcheat">Add cheat</button>`;
+  }
+  function saveCheats() {
+    PS.emu.applyCheats(S.cheats);
+    if (S.gameId) PS.library.update(S.gameId, { cheats: S.cheats }).catch(() => {});
   }
 
   async function onSheetAction(e) {
@@ -587,6 +804,7 @@
     if (!t) return;
     const d = t.dataset.do;
     if (e.type === 'click' && (t.tagName === 'SELECT' || (t.tagName === 'INPUT'))) return; // handled on change
+    if (e.type === 'change' && t.tagName === 'BUTTON') return;
     const net = S.net;
     try {
       switch (d) {
@@ -620,6 +838,25 @@
           renderSheet();
           break;
         case 'uncap': S.uncapped = PS.emu.setUncapped(t.checked) && t.checked; break;
+        case 'pause': S.autoPaused = false; setPause(!PS.emu.paused); renderSheet(); break;
+        case 'shot': await takeScreenshot(); break;
+        case 'filter': P.filter = t.dataset.v; applyLook(); renderSheet(); break;
+        case 'fit': P.fit = t.dataset.v; applyView(); renderSheet(); break;
+        case 'turbo': P.turbo = (P.turbo || 0) ^ (1 << +t.dataset.b); applyLook(); t.classList.toggle('on'); break;
+        case 'padsize': P.padSize = +t.value; applyLook(); break;
+        case 'padalpha': P.padAlpha = +t.value; applyLook(); break;
+        case 'cheat': S.cheats[+t.dataset.i].on = t.checked; saveCheats(); break;
+        case 'delcheat': S.cheats.splice(+t.dataset.i, 1); saveCheats(); renderSheet(); break;
+        case 'addcheat': {
+          const code = $('#cheatCode').value;
+          if (!PS.emu.normalizeCheat(code)) { toast('That code doesn\u2019t look right. Each line needs 8 + 4 hex digits.', 4500); break; }
+          S.cheats.push({ name: $('#cheatName').value.trim() || `Cheat ${S.cheats.length + 1}`, code: code.trim(), on: true });
+          $('#cheatName').value = ''; $('#cheatCode').value = '';
+          saveCheats();
+          toast('Cheat added and switched on');
+          renderSheet();
+          break;
+        }
         case 'localfull': S.localFull = t.checked; applyView(); break;
         case 'skin': S.skinId = P.skin = t.value; renderPad(); break;
         case 'delskin':
