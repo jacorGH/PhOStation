@@ -74,6 +74,10 @@
       <p class="note" id="perfNote"></p>
     </div>
     <button class="big primary" id="startBtn" disabled><b>Start game</b></button>
+    <div class="links">
+      <button class="link" data-direct-invite>Invite directly, without the lobby</button>
+      <button class="link" data-check>Check my connection</button>
+    </div>
   </div>
 </section>
 
@@ -91,6 +95,10 @@
     </div>
     <button class="big primary" id="joinBtn"><b>Join</b></button>
     <p class="status">Your controls are sent to the host, who streams the game back to you.</p>
+    <div class="links">
+      <button class="link" id="directJoinBtn">I have a direct invite code</button>
+      <button class="link" data-check>Check my connection</button>
+    </div>
   </div>
 </section>
 
@@ -138,6 +146,11 @@
   <div class="sheet" role="dialog" aria-label="Menu"><div class="grab"></div><div id="sheetBody"></div></div>
 </div>
 
+<div id="modal" hidden>
+  <div class="backdrop" data-close></div>
+  <div class="dialog" role="dialog" aria-modal="true"><button class="x" data-close aria-label="Close">×</button><div id="modalBody"></div></div>
+</div>
+
 <div id="ended" hidden><div><h2>Session over</h2><p id="endedMsg"></p><button class="big primary" id="endedBtn"><b>Back to start</b></button></div></div>
 <div id="toast" role="status" aria-live="polite"></div>
 <input type="file" id="skinFile" hidden>
@@ -150,6 +163,8 @@
 <script src="js/unpack.js"></script>
 <script src="js/controls.js"></script>
 <script src="js/delta.js"></script>
+<script src="js/direct.js"></script>
+<script src="js/nettest.js"></script>
 <script src="js/net.js"></script>
 <script src="js/app.js"></script>
 </body>

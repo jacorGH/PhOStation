@@ -86,5 +86,13 @@
     del: (k) => tx('readwrite', (s) => s.delete(k)),
   };
 
+  // STUN servers for NAT traversal, plus the user's TURN relay if they set one.
+  PS.iceServers = () => {
+    const ice = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'stun:stun.cloudflare.com:3478' }];
+    const t = PS.prefs.turn;
+    if (t && t.url) ice.push({ urls: t.url.split(',').map((x) => x.trim()).filter(Boolean), username: t.user || '', credential: t.pass || '' });
+    return ice;
+  };
+
   PS.esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 })();

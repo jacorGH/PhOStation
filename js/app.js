@@ -142,7 +142,7 @@
         if (!S.running) { S.net.destroy(); openRoom(); }
       } else if (s === 'reconnecting') {
         if (S.running) toast('Lobby connection dropped. Players already in stay connected.');
-        else setHostStatus('Lobby connection dropped. Reconnecting…');
+        else setHostStatus('Can\u2019t reach the lobby, so room codes may not work. Direct invites still do.');
       }
     },
     roster: onRoster,
@@ -540,6 +540,125 @@
   }
   applyLook();
 
+  // ---------- modal ----------
+  function openModal(html) { $('#modalBody').innerHTML = html; $('#modal').hidden = false; }
+  function closeModal() { $('#modal').hidden = true; $('#modalBody').innerHTML = ''; }
+  $('#modal').addEventListener('click', (e) => { if (e.target.closest('[data-close]')) closeModal(); });
+  async function copyText(text, label) {
+    try { await navigator.clipboard.writeText(text); toast(`${label} copied`); }
+    catch (e) { toast('Couldn\u2019t copy. Press and hold the code box to copy it.'); }
+  }
+
+  // ---------- connection check ----------
+  document.addEventListener('click', (e) => { if (e.target.closest('[data-check]')) runCheck(); });
+  async function runCheck() {
+    const rows = [
+      ['lobby', 'Lobby server', 'Needed for room codes'],
+      ['nat', 'Peer-to-peer', 'Can this network punch through to friends?'],
+      ['turn', 'TURN relay', P.turn && P.turn.url ? 'Your fallback relay' : 'Not set up'],
+    ];
+    openModal(`<h2>Connection check</h2><p class="note">Takes about 10 seconds. Run it on both phones to compare.</p>
+      <div class="checks">${rows.map(([k, t, d]) => `<div class="check" data-k="${k}" data-s="${k === 'turn' && !(P.turn && P.turn.url) ? 'skip' : 'run'}"><span class="ic"></span><span>${t}<small>${d}</small></span></div>`).join('')}</div>
+      <div id="checkOut"></div>`);
+    const set = (k, st, detail) => {
+      const el = $(`.check[data-k="${k}"]`);
+      if (!el) return;
+      el.dataset.s = st;
+      if (detail) $('small', el).textContent = detail;
+    };
+    let r;
+    try {
+      r = await PS.nettest.run((k, st) => set(k, st));
+    } catch (e) {
+      $('#checkOut').innerHTML = `<div class="verdict bad"><b>The check couldn\u2019t run</b><p>${esc(e.message)}</p></div>`;
+      return;
+    }
+    set('lobby', r.lobby ? 'ok' : 'bad', r.lobby ? 'Reachable, room codes work' : 'Unreachable, use direct invite codes');
+    set('nat', r.nat === 'open' ? 'ok' : r.nat === 'strict' ? 'warn' : 'bad',
+      r.nat === 'open' ? 'Open NAT' + (r.ipv6 ? ', IPv6 available' : '') : r.nat === 'strict' ? 'Strict (symmetric) NAT' : 'Blocked on this network');
+    if (r.turn !== null) set('turn', r.turn ? 'ok' : 'bad', r.turn ? 'Relay is working' : 'Relay didn\u2019t answer');
+    const v = PS.nettest.verdict(r);
+    $('#checkOut').innerHTML = `<div class="verdict ${v.level}"><b>${esc(v.title)}</b>${v.tips.map((t) => `<p>${esc(t)}</p>`).join('')}</div>
+      ${r.publicIps.length ? `<p class="note" style="margin-top:12px">Your public address: ${r.publicIps.map(esc).join(', ')}</p>` : ''}`;
+  }
+
+  // ---------- direct invites (host) ----------
+  document.addEventListener('click', (e) => { if (e.target.closest('[data-direct-invite]')) hostDirectInvite(); });
+  async function hostDirectInvite() {
+    if (S.role !== 'host' || !S.net || !S.net.directInvite) { toast('Start hosting first'); return; }
+    openModal(`<h2>Direct invite</h2><p class="note">No lobby server: you and your friend swap codes containing your connection details, then connect straight to each other. One invite per friend.</p>
+      <p class="dstatus" id="dStatus">Making your invite…</p>`);
+    let inv;
+    try { inv = await S.net.directInvite(); }
+    catch (e) { $('#dStatus').textContent = 'Couldn\u2019t make an invite: ' + e.message; $('#dStatus').className = 'dstatus bad'; return; }
+    const link = `${location.origin}${location.pathname}?direct=${inv.code}`;
+    $('#modalBody').innerHTML = `<h2>Direct invite</h2><p class="note">No lobby server: you and your friend swap codes containing your connection details, then connect straight to each other. One invite per friend.</p>
+      <div class="step"><span class="n">1</span><div><b>Send this invite to your friend</b>
+        <textarea class="codebox" readonly>${esc(link)}</textarea>
+        <div class="row2 tight"><button class="ghost" id="dShare">Share</button><button class="ghost" id="dCopy">Copy</button></div></div></div>
+      <div class="step"><span class="n">2</span><div><b>Paste the reply code they send back</b>
+        <textarea class="codebox" id="dReply" placeholder="PHO1…" spellcheck="false" autocapitalize="off"></textarea>
+        <button class="big primary tight" id="dConnect"><b>Connect</b></button></div></div>
+      <p class="dstatus" id="dStatus"></p>
+      <button class="link" id="dAnother" hidden>Invite another friend</button>`;
+    $('#dShare').onclick = async () => {
+      try { if (navigator.share) await navigator.share({ title: 'PhoStation direct invite', text: 'Open this to join my PS1 game:', url: link }); else copyText(link, 'Invite'); } catch (e) {}
+    };
+    $('#dCopy').onclick = () => copyText(link, 'Invite');
+    const status = (t, cls) => { $('#dStatus').textContent = t; $('#dStatus').className = 'dstatus ' + (cls || ''); };
+    $('#dConnect').onclick = async () => {
+      const text = $('#dReply').value;
+      if (!PS.direct.findCode(text)) { status('Paste the whole reply code (it starts with PHO1).', 'bad'); return; }
+      $('#dConnect').disabled = true;
+      status('Connecting directly…');
+      try { await inv.accept(text); }
+      catch (e) { status(e.message, 'bad'); $('#dConnect').disabled = false; return; }
+      const watch = () => {
+        const st = inv.pc.connectionState;
+        if (st === 'connected') { status('Connected! They\u2019re in the room.', 'ok'); $('#dAnother').hidden = false; }
+        else if (st === 'failed') status('Couldn\u2019t connect directly. Both networks may have strict NAT. Run the connection check on both phones, or add a TURN relay in Settings.', 'bad');
+      };
+      inv.pc.addEventListener('connectionstatechange', watch);
+      watch();
+    };
+    $('#dAnother').onclick = hostDirectInvite;
+  }
+
+  // ---------- direct invites (guest) ----------
+  $('#directJoinBtn').onclick = () => guestDirectStart('');
+  function guestDirectStart(prefill) {
+    openModal(`<h2>Join with a direct invite</h2><p class="note">Paste the invite your friend sent. You\u2019ll get a reply code to send back, then you connect straight to each other.</p>
+      <textarea class="codebox" id="gInvite" placeholder="Invite link or code" spellcheck="false" autocapitalize="off">${esc(prefill)}</textarea>
+      <div class="seg" id="gWant"><button data-want="player" class="on">Play</button><button data-want="spectator">Watch</button></div>
+      <button class="big primary" id="gMake"><b>Make my reply code</b></button>
+      <p class="dstatus" id="gStatus"></p>`);
+    let want = 'player';
+    $$('#gWant button').forEach((b) => (b.onclick = () => { want = b.dataset.want; $$('#gWant button').forEach((x) => x.classList.toggle('on', x === b)); }));
+    $('#gMake').onclick = () => {
+      const code = PS.direct.findCode($('#gInvite').value);
+      if (!code) { $('#gStatus').textContent = 'Paste the whole invite (it contains PHO1).'; $('#gStatus').className = 'dstatus bad'; return; }
+      $('#gStatus').textContent = 'Making your reply code…';
+      $('#gStatus').className = 'dstatus';
+      S.role = 'guest';
+      S.code = 'DIRECT';
+      S.want = want;
+      enterPlay();
+      $('#roomChip').textContent = 'Direct';
+      setWaiting('Making your reply code…');
+      S.net = PS.net.joinDirect(code, myName(), want, directHandlers);
+    };
+  }
+  const directHandlers = {};
+  function showReply(code) {
+    openModal(`<h2>Send this reply to the host</h2><p class="note">They paste it into their invite screen. Keep this screen open until you\u2019re connected.</p>
+      <textarea class="codebox" readonly>${esc(code)}</textarea>
+      <div class="row2 tight"><button class="ghost" id="rShare">Share</button><button class="ghost" id="rCopy">Copy</button></div>
+      <p class="dstatus" id="rStatus">Waiting for the host to connect…</p>`);
+    $('#rShare').onclick = async () => { try { if (navigator.share) await navigator.share({ text: code }); else copyText(code, 'Reply'); } catch (e) {} };
+    $('#rCopy').onclick = () => copyText(code, 'Reply');
+  }
+  const directParam = new URLSearchParams(location.search).get('direct');
+
   // ---------- join ----------
   $('#codeInput').addEventListener('input', (e) => {
     e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
@@ -573,11 +692,12 @@
       applyView();
     },
     lost() { setWaiting('Connection lost. Reconnecting, your port is held…'); },
-    stats({ rtt, fps, tier }) {
+    stats({ rtt, fps, tier, path }) {
       const parts = [];
       if (rtt != null) parts.push(`${rtt} ms`);
       if (fps != null) parts.push(`${fps} fps`);
       if (tier) parts.push(tier);
+      if (path) parts.push(path);
       setStat(parts.join('  '), rtt);
     },
     ended(msg) {
@@ -585,6 +705,16 @@
       $('#ended').hidden = false;
     },
   };
+  Object.assign(directHandlers, guestHandlers, {
+    reply: showReply,
+    status(msg) {
+      guestHandlers.status(msg);
+      const el = $('#rStatus');
+      if (el && msg) el.textContent = msg;
+    },
+    welcome() { closeModal(); toast('Connected directly'); },
+  });
+  if (directParam) { show('join'); guestDirectStart(directParam); }
   $('#endedBtn').onclick = () => (location.href = location.pathname);
 
   // ---------- sound unlock ----------
@@ -755,7 +885,14 @@
     }).join('');
   }
   function statusOf(m) {
-    return !m.connected ? 'reconnecting' : m.isHost ? 'host' : m.rtt != null ? `${m.rtt} ms${m.tier ? ', ' + m.tier : ''}` : '';
+    if (!m.connected) return 'reconnecting';
+    if (m.isHost) return 'host';
+    const bits = [];
+    if (m.rtt != null) bits.push(`${m.rtt} ms`);
+    if (m.tier) bits.push(m.tier);
+    if (m.path) bits.push(m.path);
+    else if (m.direct) bits.push('direct link');
+    return bits.join(', ');
   }
   // Only touch the status text so open dropdowns aren't rebuilt under the user's finger.
   function refreshPlayers() {
@@ -786,6 +923,7 @@
         <button class="ghost" data-do="shot">Screenshot</button></div>`;
     } else if (!host) html += `<button class="ghost wide top" data-do="shot">Screenshot</button>`;
     html += `<h3>Players</h3>${portsStrip()}<div id="sheetPlayers">${playerRows()}</div>`;
+    if (host) html += `<div class="row2 tight"><button class="ghost" data-direct-invite>Direct invite</button><button class="ghost" data-check>Check connection</button></div>`;
 
     html += `<h3>Voice</h3><button class="ghost wide ${S.net && S.net.voiceOn ? 'on' : ''}" data-do="voice">${S.net && S.net.voiceOn ? 'Turn voice chat off' : 'Turn voice chat on'}</button>`;
 
@@ -979,6 +1117,9 @@
     const t = P.turn || {};
     $('#settingsBody').innerHTML = `
       <h3>Controller</h3>${await skinsHtml()}
+      <h3>Connection</h3>
+      <p class="note">See whether this network allows peer-to-peer, what kind of NAT you\u2019re behind, and whether your relay works.</p>
+      <button class="ghost wide" data-check>Check my connection</button>
       <h3>Relay server (TURN)</h3>
       <p class="note">Leave this empty unless friends get stuck on \u201cConnecting\u201d. Some mobile networks block direct connections, and a TURN relay fixes that. Free relays are available from services like Metered or Twilio.</p>
       <label class="field"><span>TURN URL</span><input id="turnUrl" value="${esc(t.url || '')}" placeholder="turn:relay.example.com:443?transport=tcp" autocomplete="off" spellcheck="false"></label>

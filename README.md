@@ -42,6 +42,14 @@ BIOS is optional. The core's built-in BIOS runs most games, and a real BIOS (e.g
 - Screenshots to the share sheet (host and guests)
 - Bluetooth controllers and keyboard for guests (Z ✕, X ○, A □, S △, Q/W L1/R1, 1/2 L2/R2, Enter Start, Shift Select)
 
+## Connections
+
+**Room codes** use a free lobby server (PeerJS) to introduce players, then the game streams peer-to-peer.
+
+**Direct invites** skip the lobby entirely, like old Hamachi/LAN setups where you swapped IP addresses. The host taps Direct invite and sends the link; the friend opens it and sends back a reply code; the host pastes it and you're connected. The codes contain each side's IP addresses and ports, and WebRTC punches through both NATs. Works on the same Wi-Fi (LAN) or across the internet. Each invite is for one friend; if a direct link drops, make a new invite (their port is held for 2 minutes). Voice on a direct link is between that friend and the host.
+
+**Check my connection** (Settings, host setup, join screen, in-game menu) tests the lobby server, whether UDP peer-to-peer gets out, your NAT type (open or strict/symmetric) and your TURN relay, then explains what to do. Run it on both phones. The in-game stats show which path each connection actually took: LAN, Direct, or Relay.
+
 ## Good to know
 
 - Discs are written straight into the emulator without extra copies, so a game needs about its own size in memory. If the page ever restarts mid-load, the app tells you where it stopped. On iPhone that means Safari ran out of memory, and a `.chd` or `.pbp` copy of the disc fixes it.
@@ -68,6 +76,8 @@ js/emu.js           EmulatorJS wrapper, input injection, save states, split-view
 js/controls.js      touch pad, Delta skin layout, gamepad, keyboard, haptics
 js/delta.js         .deltaskin importer
 js/net.js           PeerJS host/guest, voice, reconnect, quality
+js/direct.js        direct invites (code exchange, no lobby)
+js/nettest.js       connection check
 js/app.js           screens and menu
 sw.js, manifest     PWA
 ```

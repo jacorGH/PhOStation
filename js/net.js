@@ -13,12 +13,7 @@
   ];
   const SIGNAL_ERRORS = ['network', 'server-error', 'socket-error', 'socket-closed'];
 
-  function peerOpts() {
-    const ice = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }];
-    const t = PS.prefs.turn;
-    if (t && t.url) ice.push({ urls: t.url.split(',').map((s) => s.trim()).filter(Boolean), username: t.user || '', credential: t.pass || '' });
-    return { debug: 1, config: { iceServers: ice } };
-  }
+  const peerOpts = () => ({ debug: 1, config: { iceServers: PS.iceServers() } });
   const cleanName = (n) => String(n || '').replace(/[<>]/g, '').trim().slice(0, 16) || 'Player';
 
   // ---------- Voice mesh ----------
@@ -32,7 +27,7 @@
     }
     // The member with the larger peer id places the call, so each pair connects exactly once.
     sync(roster, selfId) {
-      const live = new Set(roster.filter((m) => m.voice && m.connected && m.peerId).map((m) => m.peerId));
+      const live = new Set(roster.filter((m) => m.voice && m.connected && m.peerId && !m.direct).map((m) => m.peerId));
       for (const [id, c] of this.calls) if (!live.has(id)) c.close();
       if (!this.on || !this.peer || !this.peer.open) return;
       for (const id of live) {
@@ -122,6 +117,7 @@
       clientId: m.clientId, name: m.name, role: m.role, port: m.port, peerId: m.peerId,
       voice: !!m.voice, connected: !!m.connected, isHost: !!m.isHost,
       rtt: m.stats ? m.stats.rtt : null, tier: m.tierIdx != null ? TIERS[m.tierIdx].name : null,
+      path: m.stats ? m.stats.path : null, direct: !!m.direct,
     }));
 
     function broadcast() {
@@ -173,6 +169,9 @@
             if (d.want === 'player') { const p = freePort(); if (p != null) { m.role = 'player'; m.port = p; } }
           }
           Object.assign(m, { ctrl: conn, peerId: conn.peer, connected: true, voice: false, seq: -1, name: cleanName(d.name), goodStreak: 0, appliedTier: null, lastBytes: null });
+          if (m.direct && m.direct !== conn.direct) m.direct.close();
+          m.direct = conn.direct || null;
+          if (m.direct && voice.on) m.direct.setMic(voice.mic);
           conn.send({ t: 'welcome', port: m.port, role: m.role });
           broadcast();
           if (st.running) callGuest(m);
@@ -189,6 +188,7 @@
       if (!m || m.ctrl !== conn || !m.connected) return;
       m.connected = false; m.voice = false;
       if (m.call) { m.call.close(); m.call = null; }
+      if (m.direct) { m.direct.close(); m.direct = null; }
       if (m.port != null) PS.emu.releaseAll(m.port);
       broadcast();
       h.toast(`${m.name} dropped${m.port != null ? ' \u2014 holding P' + (m.port + 1) : ''}`);
@@ -196,11 +196,13 @@
     }
 
     async function callGuest(m) {
-      if (!m.peerId || !peer || !peer.open || !streamFactory) return;
+      if (!streamFactory) return;
+      if (!m.direct && (!m.peerId || !peer || !peer.open)) return;
       let stream;
       try { stream = await getStream(); }
       catch (e) { streamP = null; h.toast('This browser can\u2019t stream the game to friends.'); return; }
       if (!m.connected) return;
+      if (m.direct) { m.direct.setStream(stream); m.call = m.direct.media; m.appliedTier = null; return; }
       if (m.call) m.call.close();
       const call = peer.call(m.peerId, stream, { metadata: { kind: 'game' } });
       m.call = call;
@@ -246,7 +248,9 @@
             }
           });
         } catch (e) {}
+        const path = await PS.direct.pathType(m.call.peerConnection);
         m.stats = {
+          path,
           rtt: rtt != null ? Math.round(rtt * 1000) : (m.stats ? m.stats.rtt : null),
           loss: loss != null ? Math.round(loss * 100) : null,
           fps: fps ? Math.round(fps) : null,
@@ -314,8 +318,28 @@
         st.quality = q;
         for (const m of members.values()) { m.appliedTier = null; if (!m.isHost) m.tierIdx = q === 'auto' ? 1 : tierIndex(q); }
       },
-      async voiceStart() { await voice.start(); self.voice = true; broadcast(); },
-      voiceStop() { voice.stop(); self.voice = false; broadcast(); },
+      async voiceStart() {
+        await voice.start(); self.voice = true;
+        for (const m of members.values()) if (m.direct) m.direct.setMic(voice.mic);
+        broadcast();
+      },
+      voiceStop() {
+        voice.stop(); self.voice = false;
+        for (const m of members.values()) if (m.direct) m.direct.setMic(null);
+        broadcast();
+      },
+      // Lobby-free invite for one friend: hand them invite.code, then paste their reply into accept().
+      async directInvite() {
+        const inv = await PS.direct.hostInvite();
+        return {
+          code: inv.code, pc: inv.pc,
+          async accept(text) {
+            const { ctrl, input } = await inv.accept(text);
+            onConn(input);
+            onConn(ctrl);
+          },
+        };
+      },
       unlockAudio() { voice.unlock(); },
       destroy() {
         destroyed = true;
@@ -334,7 +358,7 @@
     const hostId = PREFIX + code.toUpperCase();
     let peer = null, ctrl = null, input = null, alive = true, tries = 0, retryT = null;
     let seq = 0, last = { b: 0, a: [0, 0, 0, 0] }, gameCall = null;
-    let rtt = null, hostQ = {}, fps = null;
+    let rtt = null, hostQ = {}, fps = null, path = null;
     const voice = new Voice();
 
     function newPeer() {
@@ -408,7 +432,7 @@
         case 'denied': end(d.reason || 'The room refused the connection.'); break;
       }
     }
-    function report() { h.stats({ rtt, fps, tier: hostQ.tier, loss: hostQ.loss }); }
+    function report() { h.stats({ rtt, fps, tier: hostQ.tier, loss: hostQ.loss, path }); }
 
     function end(msg) {
       alive = false;
@@ -427,6 +451,7 @@
       if (++tick % 10) return; // every 2 s
       if (ctrl && ctrl.open) ctrl.send({ t: 'ping', ts: Date.now() });
       if (gameCall && gameCall.peerConnection) {
+        path = await PS.direct.pathType(gameCall.peerConnection);
         try {
           (await gameCall.peerConnection.getStats()).forEach((r) => {
             if (r.type === 'inbound-rtp' && r.kind === 'video' && r.framesPerSecond != null) fps = Math.round(r.framesPerSecond);
@@ -447,5 +472,91 @@
     };
   }
 
-  PS.net = { createHost, join, TIERS };
+  // =====================================================================
+  // GUEST over a direct link (no lobby server)
+  // =====================================================================
+  function joinDirect(inviteText, name, want, h) {
+    let link = null, ctrl = null, input = null, alive = true;
+    let seq = 0, last = { b: 0, a: [0, 0, 0, 0] }, rtt = null, hostQ = {}, fps = null, path = null, mic = null;
+
+    const end = (msg) => {
+      if (!alive) return;
+      alive = false;
+      clearInterval(timer);
+      if (mic) mic.getTracks().forEach((t) => t.stop());
+      h.ended(msg);
+      setTimeout(() => link && link.close(), 300);
+    };
+    const report = () => h.stats({ rtt, fps, tier: hostQ.tier, loss: hostQ.loss, path });
+    const send = () => { if (input && input.open) input.send({ s: ++seq, b: last.b, a: last.a.map((v) => Math.round(v * 1000) / 1000) }); };
+
+    function onData(d) {
+      if (!d || !d.t) return;
+      switch (d.t) {
+        case 'welcome': h.status(null); h.welcome(d); if (mic) ctrl.send({ t: 'voice', on: true }); send(); break;
+        case 'roster': h.roster(d); break;
+        case 'pong': rtt = Date.now() - d.ts; report(); break;
+        case 'q': hostQ = d; report(); break;
+        case 'kick': end('The host removed you from the room.'); break;
+        case 'ended': end('The host ended the session.'); break;
+        case 'denied': end(d.reason || 'The room refused the connection.'); break;
+      }
+    }
+
+    (async () => {
+      try {
+        h.status('Making your reply code…');
+        link = await PS.direct.guestReply(inviteText, PS.clientId);
+        if (!alive) return link.close();
+        h.reply(link.code);
+        h.status('Send your reply code to the host, then wait here.');
+        link.onStream((s) => h.stream(s));
+        link.pc.addEventListener('connectionstatechange', () => {
+          const st = link.pc.connectionState;
+          if (st === 'connecting') h.status('Connecting directly…');
+          if (st === 'failed') end('The direct connection failed. Both networks may have strict NAT. Run the connection check, or add a TURN relay in Settings.');
+        });
+        const ch = await link.channels;
+        ctrl = ch.ctrl; input = ch.input;
+        ctrl.on('open', () => ctrl.send({ t: 'hello', name, want }));
+        ctrl.on('data', onData);
+        ctrl.on('close', () => end('The direct connection closed. Ask the host for a new invite code; your port is held for 2 minutes.'));
+      } catch (err) {
+        end(err.message || 'That invite code didn\u2019t work.');
+      }
+    })();
+
+    let tick = 0;
+    const timer = setInterval(async () => {
+      send();
+      if (++tick % 10 || !link) return;
+      if (ctrl && ctrl.open) ctrl.send({ t: 'ping', ts: Date.now() });
+      path = await PS.direct.pathType(link.pc);
+      try {
+        (await link.pc.getStats()).forEach((r) => {
+          if (r.type === 'inbound-rtp' && r.kind === 'video' && r.framesPerSecond != null) fps = Math.round(r.framesPerSecond);
+        });
+      } catch (e) {}
+    }, 200);
+
+    return {
+      sendInput(s) { last = s; send(); },
+      get voiceOn() { return !!mic; },
+      async voiceStart() {
+        mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+        if (link) link.setMic(mic);
+        if (ctrl && ctrl.open) ctrl.send({ t: 'voice', on: true });
+      },
+      voiceStop() {
+        if (mic) mic.getTracks().forEach((t) => t.stop());
+        mic = null;
+        if (link) link.setMic(null);
+        if (ctrl && ctrl.open) ctrl.send({ t: 'voice', on: false });
+      },
+      unlockAudio() { document.querySelectorAll('audio').forEach((a) => a.play().catch(() => {})); },
+      leave() { alive = false; clearInterval(timer); if (mic) mic.getTracks().forEach((t) => t.stop()); if (link) link.close(); },
+    };
+  }
+
+  PS.net = { createHost, join, joinDirect, TIERS };
 })();
