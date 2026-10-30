@@ -36,7 +36,9 @@
     if (msg) $('p', w).textContent = msg;
   }
   async function share() {
-    const url = inviteUrl();
+    let url = inviteUrl();
+    const relay = PS.ice.shareable();
+    if (relay) { try { url += '&r=' + (await PS.direct.packRelay(relay)); } catch (e) {} }
     try {
       if (navigator.share) await navigator.share({ title: 'PhoStation', text: `Join my PS1 room: ${S.code}`, url });
       else { await navigator.clipboard.writeText(url); toast('Invite link copied'); }
@@ -63,7 +65,7 @@
   }
   $('#continueBtn').onclick = async () => {
     const id = $('#continueBtn').dataset.id;
-    startHosting();
+    await startHosting();
     await selectGame(id);
     if (S.gameId !== id) return;
     S.autoResume = true;
@@ -114,11 +116,15 @@
   if (qRoom) { $('#codeInput').value = qRoom.toUpperCase().slice(0, 5); show('join'); }
 
   // ---------- host setup ----------
-  function startHosting() {
+  async function freshRelay() {
+    try { await PS.ice.refresh(); } catch (e) { toast('Relay: ' + e.message, 5000); }
+  }
+  async function startHosting() {
     S.role = 'host';
     show('hostSetup');
     loadSavedBios();
     renderLibrary();
+    await freshRelay();
     try { openRoom(); }
     catch (e) { setHostStatus('The lobby library didn’t load, so friends can’t join. You can still play solo.'); }
   }
@@ -555,10 +561,10 @@
     const rows = [
       ['lobby', 'Lobby server', 'Needed for room codes'],
       ['nat', 'Peer-to-peer', 'Can this network punch through to friends?'],
-      ['turn', 'TURN relay', P.turn && P.turn.url ? 'Your fallback relay' : 'Not set up'],
+      ['turn', 'Your relay', hasRelay() ? 'Fallback when direct fails' : 'Not set up yet'],
     ];
     openModal(`<h2>Connection check</h2><p class="note">Takes about 10 seconds. Run it on both phones to compare.</p>
-      <div class="checks">${rows.map(([k, t, d]) => `<div class="check" data-k="${k}" data-s="${k === 'turn' && !(P.turn && P.turn.url) ? 'skip' : 'run'}"><span class="ic"></span><span>${t}<small>${d}</small></span></div>`).join('')}</div>
+      <div class="checks">${rows.map(([k, t, d]) => `<div class="check" data-k="${k}" data-s="${k === 'turn' && !hasRelay() ? 'skip' : 'run'}"><span class="ic"></span><span>${t}<small>${d}</small></span></div>`).join('')}</div>
       <div id="checkOut"></div>`);
     const set = (k, st, detail) => {
       const el = $(`.check[data-k="${k}"]`);
@@ -568,6 +574,7 @@
     };
     let r;
     try {
+      await freshRelay();
       r = await PS.nettest.run((k, st) => set(k, st));
     } catch (e) {
       $('#checkOut').innerHTML = `<div class="verdict bad"><b>The check couldn\u2019t run</b><p>${esc(e.message)}</p></div>`;
@@ -584,8 +591,10 @@
 
   // ---------- direct invites (host) ----------
   document.addEventListener('click', (e) => { if (e.target.closest('[data-direct-invite]')) hostDirectInvite(); });
+  const hasRelay = () => !!((P.turn && P.turn.url) || (P.relayWorker && P.relayWorker.url));
   async function hostDirectInvite() {
     if (S.role !== 'host' || !S.net || !S.net.directInvite) { toast('Start hosting first'); return; }
+    await freshRelay();
     openModal(`<h2>Direct invite</h2><p class="note">No lobby server: you and your friend swap codes containing your connection details, then connect straight to each other. One invite per friend.</p>
       <p class="dstatus" id="dStatus">Making your invite…</p>`);
     let inv;
@@ -599,6 +608,7 @@
       <div class="step"><span class="n">2</span><div><b>Paste the reply code they send back</b>
         <textarea class="codebox" id="dReply" placeholder="PHO1…" spellcheck="false" autocapitalize="off"></textarea>
         <button class="big primary tight" id="dConnect"><b>Connect</b></button></div></div>
+      ${inv.sharedRelay ? '<p class="note">Your relay is included, so this friend can connect even from a strict network.</p>' : ''}
       <p class="dstatus" id="dStatus"></p>
       <button class="link" id="dAnother" hidden>Invite another friend</button>`;
     $('#dShare').onclick = async () => {
@@ -634,7 +644,7 @@
       <p class="dstatus" id="gStatus"></p>`);
     let want = 'player';
     $$('#gWant button').forEach((b) => (b.onclick = () => { want = b.dataset.want; $$('#gWant button').forEach((x) => x.classList.toggle('on', x === b)); }));
-    $('#gMake').onclick = () => {
+    $('#gMake').onclick = async () => {
       const code = PS.direct.findCode($('#gInvite').value);
       if (!code) { $('#gStatus').textContent = 'Paste the whole invite (it contains PHO1).'; $('#gStatus').className = 'dstatus bad'; return; }
       $('#gStatus').textContent = 'Making your reply code…';
@@ -645,6 +655,7 @@
       enterPlay();
       $('#roomChip').textContent = 'Direct';
       setWaiting('Making your reply code…');
+      if (PS.ice.relayServers(false).length) await freshRelay();
       S.net = PS.net.joinDirect(code, myName(), want, directHandlers);
     };
   }
@@ -658,6 +669,19 @@
     $('#rCopy').onclick = () => copyText(code, 'Reply');
   }
   const directParam = new URLSearchParams(location.search).get('direct');
+  (async () => {
+    const q = new URLSearchParams(location.search);
+    // A friend's room invite can carry their relay logins for this session.
+    if (q.get('r')) { try { PS.ice.useShared(await PS.direct.unpackRelay(q.get('r'))); } catch (e) {} }
+    // Setup link printed by relay/setup-coturn.sh: saves your own TURN server.
+    if (q.get('turn')) {
+      try {
+        const t = JSON.parse(atob(q.get('turn').replace(/-/g, '+').replace(/_/g, '/')));
+        if (t.url) { P.turn = { url: t.url, user: t.user || '', pass: t.pass || '' }; P.relayMode = 'own'; toast('Your relay server is saved', 4000); }
+      } catch (e) { toast('That relay setup link is damaged'); }
+      history.replaceState(null, '', location.pathname);
+    }
+  })();
 
   // ---------- join ----------
   $('#codeInput').addEventListener('input', (e) => {
@@ -668,13 +692,14 @@
     S.want = b.dataset.want;
     $$('#wantSeg button').forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', x === b); });
   }));
-  $('#joinBtn').onclick = () => {
+  $('#joinBtn').onclick = async () => {
     const code = $('#codeInput').value.trim().toUpperCase();
     if (code.length !== 5) { toast('Room codes have 5 characters'); return; }
     S.role = 'guest';
     S.code = code;
     enterPlay();
     setWaiting('Connecting…');
+    await freshRelay();
     S.net = PS.net.join(code, myName(), S.want, guestHandlers);
   };
   const guestHandlers = {
@@ -1078,10 +1103,10 @@
           if (S.role === 'host') net.destroy(); else net.leave();
           setTimeout(() => (location.href = location.pathname), 350);
           break;
-        case 'turnsave':
-          P.turn = { url: $('#turnUrl').value.trim(), user: $('#turnUser').value.trim(), pass: $('#turnPass').value };
-          toast('Connection settings saved. They apply to the next room.');
-          break;
+        case 'relaymode': P.relayMode = t.dataset.v; renderSettings(); break;
+        case 'sharerelay': P.shareRelay = t.checked; break;
+        case 'relayguide': relayGuide(); break;
+        case 'relaysave': await saveRelay(); break;
       }
     } catch (err) { toast(err.message || String(err)); }
   }
@@ -1120,14 +1145,71 @@
       <h3>Connection</h3>
       <p class="note">See whether this network allows peer-to-peer, what kind of NAT you\u2019re behind, and whether your relay works.</p>
       <button class="ghost wide" data-check>Check my connection</button>
-      <h3>Relay server (TURN)</h3>
-      <p class="note">Leave this empty unless friends get stuck on \u201cConnecting\u201d. Some mobile networks block direct connections, and a TURN relay fixes that. Free relays are available from services like Metered or Twilio.</p>
-      <label class="field"><span>TURN URL</span><input id="turnUrl" value="${esc(t.url || '')}" placeholder="turn:relay.example.com:443?transport=tcp" autocomplete="off" spellcheck="false"></label>
-      <label class="field"><span>Username</span><input id="turnUser" value="${esc(t.user || '')}" autocomplete="off" spellcheck="false"></label>
-      <label class="field"><span>Password</span><input id="turnPass" type="password" value="${esc(t.pass || '')}" autocomplete="off"></label>
-      <button class="ghost wide" data-do="turnsave">Save connection settings</button>
+      <h3>Your relay (TURN)</h3>
+      <p class="note">A relay carries the game when two networks can\u2019t connect directly (the check says Strict or Blocked). Set one up once and it\u2019s yours. Only needed by the host; friends you invite can borrow it.</p>
+      <div class="seg" id="relayMode">
+        <button data-do="relaymode" data-v="cf" class="${(P.relayMode || 'cf') === 'cf' ? 'on' : ''}">Cloudflare (free)</button>
+        <button data-do="relaymode" data-v="own" class="${P.relayMode === 'own' ? 'on' : ''}">Own server</button>
+      </div>
+      ${(P.relayMode || 'cf') === 'cf' ? `
+      <label class="field"><span>Your Worker address</span><input id="cfUrl" value="${esc((P.relayWorker && P.relayWorker.url) || '')}" placeholder="https://phostation-relay.you.workers.dev" autocomplete="off" spellcheck="false" autocapitalize="off"></label>
+      <label class="field"><span>Access code</span><input id="cfCode" type="password" value="${esc((P.relayWorker && P.relayWorker.code) || '')}" autocomplete="off"></label>` : `
+      <label class="field"><span>TURN URL</span><input id="turnUrl" value="${esc(t.url || '')}" placeholder="turn:203.0.113.5:3478" autocomplete="off" spellcheck="false" autocapitalize="off"></label>
+      <label class="field"><span>Username</span><input id="turnUser" value="${esc(t.user || '')}" autocomplete="off" spellcheck="false" autocapitalize="off"></label>
+      <label class="field"><span>Password</span><input id="turnPass" type="password" value="${esc(t.pass || '')}" autocomplete="off"></label>`}
+      <div class="row2"><button class="ghost" data-do="relaysave">Save and test</button><button class="ghost" data-do="relayguide">Setup guide</button></div>
+      <p class="dstatus" id="relayStatus"></p>
+      <label class="toggle"><input type="checkbox" data-do="sharerelay" ${P.shareRelay ? 'checked' : ''}><span><b>Share my relay with friends I invite</b><small>Invites carry short-lived relay logins (valid up to a day), so friends on strict networks can still connect.</small></span></label>
       <h3>About</h3>
       <p class="note">PhoStation runs EmulatorJS with the PCSX-ReARMed core. Bring your own game discs and BIOS.</p>`;
+  }
+
+  // ---------- your relay ----------
+  async function saveRelay() {
+    const st = $('#relayStatus');
+    const say = (msg, cls) => { st.textContent = msg; st.className = 'dstatus ' + (cls || ''); };
+    if ((P.relayMode || 'cf') === 'cf') {
+      const url = $('#cfUrl').value.trim(), code = $('#cfCode').value;
+      P.relayWorker = url ? { url, code } : null;
+      P.turn = null;
+      PS.ice.clearCache();
+      if (!url) { say('Relay turned off.'); return; }
+      say('Asking your Worker for relay logins…');
+      try { await PS.ice.refresh(true); } catch (e) { say(e.message, 'bad'); return; }
+    } else {
+      const url = $('#turnUrl').value.trim();
+      P.turn = url ? { url, user: $('#turnUser').value.trim(), pass: $('#turnPass').value } : null;
+      P.relayWorker = null;
+      PS.ice.clearCache();
+      if (!url) { say('Relay turned off.'); return; }
+    }
+    say('Testing the relay…');
+    const list = PS.ice.relayServers(false);
+    try {
+      const pc = new RTCPeerConnection({ iceServers: list, iceTransportPolicy: 'relay' });
+      let ok = false;
+      pc.onicecandidate = (e) => { if (e.candidate && / typ relay /.test(e.candidate.candidate)) ok = true; };
+      pc.createDataChannel('t');
+      await pc.setLocalDescription(await pc.createOffer());
+      await new Promise((r) => { const tm = setTimeout(r, 8000); pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') { clearTimeout(tm); r(); } }; });
+      pc.close();
+      say(ok ? 'Relay works. It\u2019s used automatically when a direct connection fails.' : 'Saved, but the relay didn\u2019t answer. Check the details and the server\u2019s firewall.', ok ? 'ok' : 'bad');
+    } catch (e) { say('Saved, but the test couldn\u2019t run: ' + e.message, 'bad'); }
+  }
+
+  function relayGuide() {
+    openModal(`<h2>Set up your free relay</h2>
+      <p class="note">Pick one. Cloudflare is easiest and can be done from your phone in about 10 minutes.</p>
+      <h3>Cloudflare (free, recommended)</h3>
+      <p class="note">Cloudflare\u2019s relay is free for the first 1,000 GB each month, far more than gaming uses. A tiny Worker (also free) keeps your Cloudflare key secret and hands PhoStation short-lived logins.</p>
+      <div class="step"><span class="n">1</span><div><b>Make a free Cloudflare account</b>Sign up at dash.cloudflare.com.</div></div>
+      <div class="step"><span class="n">2</span><div><b>Create a TURN key</b>In the dashboard, find Realtime, then TURN Server, and create one. Copy the <i>Turn Token ID</i> and <i>API Token</i> (the token is only shown once).</div></div>
+      <div class="step"><span class="n">3</span><div><b>Create a Worker</b>Workers &amp; Pages, Create, start from the Hello World template, name it e.g. phostation-relay, Deploy. Then Edit code, replace everything with <i>relay/cloudflare-worker.js</i> from this project, and Deploy.</div></div>
+      <div class="step"><span class="n">4</span><div><b>Add three settings to the Worker</b>Settings, Variables and Secrets: <i>TURN_KEY_ID</i> (the Token ID), <i>TURN_KEY_API_TOKEN</i> (the API token, as a secret) and <i>ACCESS_CODE</i> (any password you make up, as a secret).</div></div>
+      <div class="step"><span class="n">5</span><div><b>Connect PhoStation</b>Copy the Worker\u2019s address (ends in workers.dev), paste it and your access code here, and tap Save and test.</div></div>
+      <h3>Your own server</h3>
+      <p class="note">For a relay that\u2019s entirely yours, run <i>relay/setup-coturn.sh</i> on a free cloud server (for example Oracle Cloud\u2019s Always Free tier). It installs the coturn relay, opens the ports and prints a setup link; open that link on your phone and the relay is saved. Details are in <i>relay/README.md</i>.</p>
+      <button class="big primary tight" data-close><b>Got it</b></button>`);
   }
 
   // ---------- service worker ----------

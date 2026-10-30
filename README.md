@@ -46,14 +46,18 @@ BIOS is optional. The core's built-in BIOS runs most games, and a real BIOS (e.g
 
 **Room codes** use a free lobby server (PeerJS) to introduce players, then the game streams peer-to-peer.
 
-**Direct invites** skip the lobby entirely, like old Hamachi/LAN setups where you swapped IP addresses. The host taps Direct invite and sends the link; the friend opens it and sends back a reply code; the host pastes it and you're connected. The codes contain each side's IP addresses and ports, and WebRTC punches through both NATs. Works on the same Wi-Fi (LAN) or across the internet. Each invite is for one friend; if a direct link drops, make a new invite (their port is held for 2 minutes). Voice on a direct link is between that friend and the host.
+**Direct invites** skip the lobby entirely, like old Hamachi/LAN setups where you swapped IP addresses. The host taps Direct invite and sends the link; the friend opens it and sends back a reply code; the host pastes it and you're connected. The codes contain each side's IP addresses and ports, and WebRTC punches through both NATs. Works on the same Wi-Fi (LAN) or across the internet. Each invite is for one friend; if a direct link drops, make a new invite (their port is held for 2 minutes). Invites are about 680 characters (about 900 with relay logins) and replies about 240.
+
+**The host is the broker.** Once friends are connected, the host passes connection messages between them, so voice chat is a full mesh (everyone hears everyone) with no lobby server, whether friends joined by room code or direct invite.
+
+**Your own relay.** Settings > Your relay sets up a TURN relay just for you: a free Cloudflare Worker (1,000 GB a month free) or your own server with `relay/setup-coturn.sh`. See `relay/README.md`. With sharing on, invites carry short-lived relay logins so friends on strict networks can connect too.
 
 **Check my connection** (Settings, host setup, join screen, in-game menu) tests the lobby server, whether UDP peer-to-peer gets out, your NAT type (open or strict/symmetric) and your TURN relay, then explains what to do. Run it on both phones. The in-game stats show which path each connection actually took: LAN, Direct, or Relay.
 
 ## Good to know
 
 - Discs are written straight into the emulator without extra copies, so a game needs about its own size in memory. If the page ever restarts mid-load, the app tells you where it stopped. On iPhone that means Safari ran out of memory, and a `.chd` or `.pbp` copy of the disc fixes it.
-- If friends get stuck on "Connecting", their network blocks direct peer connections. Add a TURN relay in Settings (Metered and Twilio have free tiers).
+- If friends get stuck on "Connecting", run the connection check on both phones. If either side is Strict or Blocked, set up your free relay (Settings > Your relay).
 - The host should keep PhoStation in the foreground. iOS pauses background tabs, which freezes the game for everyone.
 - Turning on the mic on iPhone can switch iOS into call audio mode, which makes game sound quieter. That's an iOS behavior.
 - If a game ignores the analog stick, open the menu → Show emulator menu → Settings and set the controller type to DualShock.
@@ -76,7 +80,10 @@ js/emu.js           EmulatorJS wrapper, input injection, save states, split-view
 js/controls.js      touch pad, Delta skin layout, gamepad, keyboard, haptics
 js/delta.js         .deltaskin importer
 js/net.js           PeerJS host/guest, voice, reconnect, quality
-js/direct.js        direct invites (code exchange, no lobby)
+js/direct.js        direct invites (compact code exchange, no lobby)
+js/mesh.js          voice mesh brokered by the host
+js/ice.js           STUN/TURN servers, your relay, shared relays
+relay/              Cloudflare Worker, coturn setup script, relay guide
 js/nettest.js       connection check
 js/app.js           screens and menu
 sw.js, manifest     PWA

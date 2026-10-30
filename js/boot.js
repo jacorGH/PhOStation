@@ -53,6 +53,7 @@
   try { p = JSON.parse(localStorage.getItem('phostation.prefs') || '{}'); } catch (e) {}
   const save = () => { try { localStorage.setItem('phostation.prefs', JSON.stringify(p)); } catch (e) {} };
   if (p.haptics === undefined) p.haptics = true;
+  if (p.shareRelay === undefined) p.shareRelay = true;
   PS.prefs = new Proxy(p, { set(t, k, v) { t[k] = v; save(); return true; } });
 
   // A per-tab identity: survives reloads/reconnects, distinct per tab.
@@ -84,14 +85,6 @@
     get: (k) => tx('readonly', (s) => s.get(k)),
     set: (k, v) => tx('readwrite', (s) => s.put(v, k)),
     del: (k) => tx('readwrite', (s) => s.delete(k)),
-  };
-
-  // STUN servers for NAT traversal, plus the user's TURN relay if they set one.
-  PS.iceServers = () => {
-    const ice = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'stun:stun.cloudflare.com:3478' }];
-    const t = PS.prefs.turn;
-    if (t && t.url) ice.push({ urls: t.url.split(',').map((x) => x.trim()).filter(Boolean), username: t.user || '', credential: t.pass || '' });
-    return ice;
   };
 
   PS.esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

@@ -1,6 +1,6 @@
 /* PhoStation netplay.
    Host runs the emulator and streams video+audio to every guest. Guests send controller state back.
-   Voice is a small mesh between everyone who has the mic on. */
+   Voice is a mesh between everyone with the mic on, brokered by the host (see mesh.js). */
 (function () {
   const PS = window.PS;
   const PREFIX = 'phostation-v1-';
@@ -16,68 +16,6 @@
   const peerOpts = () => ({ debug: 1, config: { iceServers: PS.iceServers() } });
   const cleanName = (n) => String(n || '').replace(/[<>]/g, '').trim().slice(0, 16) || 'Player';
 
-  // ---------- Voice mesh ----------
-  class Voice {
-    constructor() { this.mic = null; this.on = false; this.calls = new Map(); this.audios = new Map(); this.peer = null; }
-    async start() {
-      this.mic = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false,
-      });
-      this.on = true;
-    }
-    // The member with the larger peer id places the call, so each pair connects exactly once.
-    sync(roster, selfId) {
-      const live = new Set(roster.filter((m) => m.voice && m.connected && m.peerId && !m.direct).map((m) => m.peerId));
-      for (const [id, c] of this.calls) if (!live.has(id)) c.close();
-      if (!this.on || !this.peer || !this.peer.open) return;
-      for (const id of live) {
-        if (id === selfId || this.calls.has(id) || !(selfId > id)) continue;
-        this.track(this.peer.call(id, this.mic, { metadata: { kind: 'voice' } }));
-      }
-    }
-    incoming(call) {
-      call.answer(this.on && this.mic ? this.mic : undefined);
-      this.track(call);
-    }
-    track(call) {
-      if (!call) return;
-      const id = call.peer;
-      const old = this.calls.get(id);
-      if (old && old !== call) old.close();
-      this.calls.set(id, call);
-      call.on('stream', (s) => this.play(id, s));
-      const drop = () => {
-        if (this.calls.get(id) !== call) return;
-        this.calls.delete(id);
-        const a = this.audios.get(id);
-        if (a) { a.srcObject = null; a.remove(); this.audios.delete(id); }
-      };
-      call.on('close', drop);
-      call.on('error', drop);
-    }
-    play(id, s) {
-      let a = this.audios.get(id);
-      if (!a) {
-        a = document.createElement('audio');
-        a.autoplay = true; a.playsInline = true;
-        document.body.appendChild(a);
-        this.audios.set(id, a);
-      }
-      a.srcObject = s;
-      a.play().catch(() => PS.needsTap && PS.needsTap());
-    }
-    unlock() { this.audios.forEach((a) => a.play().catch(() => {})); }
-    stop() {
-      this.on = false;
-      [...this.calls.values()].forEach((c) => c.close());
-      this.calls.clear();
-      this.audios.forEach((a) => { a.srcObject = null; a.remove(); });
-      this.audios.clear();
-      if (this.mic) this.mic.getTracks().forEach((t) => t.stop());
-      this.mic = null;
-    }
-  }
-
   // =====================================================================
   // HOST
   // =====================================================================
@@ -90,17 +28,17 @@
     let peer = null, streamFactory = null, streamP = null, canvasW = 640, destroyed = false;
     // The stream is only created once someone is watching, so solo play doesn't pay for video encoding.
     const getStream = () => streamP || (streamP = Promise.resolve().then(streamFactory));
-    const voice = new Voice();
+    // The host is the broker: voice connection messages between members go through here.
+    const mesh = new PS.Mesh('host', (to, d) => {
+      const m = members.get(to);
+      if (m && m.connected && m.ctrl && m.ctrl.open) m.ctrl.send({ t: 'sig', from: 'host', d });
+    });
 
     function open() {
       peer = new Peer(hostId, peerOpts());
-      voice.peer = peer;
       peer.on('open', () => h.status('ready'));
       peer.on('connection', onConn);
-      peer.on('call', (call) => {
-        if (call.metadata && call.metadata.kind === 'voice') voice.incoming(call);
-        else call.close();
-      });
+      peer.on('call', (call) => call.close());
       peer.on('disconnected', () => {
         if (destroyed) return;
         h.status('reconnecting');
@@ -124,7 +62,7 @@
       const msg = { t: 'roster', roster: rosterData(), ...st };
       for (const m of members.values()) if (!m.isHost && m.connected && m.ctrl && m.ctrl.open) m.ctrl.send(msg);
       h.roster(msg);
-      voice.sync(msg.roster, hostId);
+      mesh.sync(msg.roster);
     }
 
     function usedPorts() { return new Set([...members.values()].filter((m) => m.port != null).map((m) => m.port)); }
@@ -171,7 +109,6 @@
           Object.assign(m, { ctrl: conn, peerId: conn.peer, connected: true, voice: false, seq: -1, name: cleanName(d.name), goodStreak: 0, appliedTier: null, lastBytes: null });
           if (m.direct && m.direct !== conn.direct) m.direct.close();
           m.direct = conn.direct || null;
-          if (m.direct && voice.on) m.direct.setMic(voice.mic);
           conn.send({ t: 'welcome', port: m.port, role: m.role });
           broadcast();
           if (st.running) callGuest(m);
@@ -180,6 +117,14 @@
         }
         case 'ping': conn.send({ t: 'pong', ts: d.ts }); break;
         case 'voice': if (m) { m.voice = !!d.on; broadcast(); } break;
+        case 'sig': // broker: pass voice connection messages along
+          if (!m || !d.to) break;
+          if (d.to === 'host') mesh.handle(cid, d.d);
+          else {
+            const t = members.get(d.to);
+            if (t && t.connected && t.ctrl && t.ctrl.open) t.ctrl.send({ t: 'sig', from: cid, d: d.d });
+          }
+          break;
       }
     }
 
@@ -276,7 +221,7 @@
     return {
       code, hostId, tiers: TIERS,
       get state() { return { ...st }; },
-      get voiceOn() { return voice.on; },
+      get voiceOn() { return mesh.on; },
       roster: rosterData,
       setRunning(factory) {
         streamFactory = factory; st.running = true;
@@ -318,21 +263,13 @@
         st.quality = q;
         for (const m of members.values()) { m.appliedTier = null; if (!m.isHost) m.tierIdx = q === 'auto' ? 1 : tierIndex(q); }
       },
-      async voiceStart() {
-        await voice.start(); self.voice = true;
-        for (const m of members.values()) if (m.direct) m.direct.setMic(voice.mic);
-        broadcast();
-      },
-      voiceStop() {
-        voice.stop(); self.voice = false;
-        for (const m of members.values()) if (m.direct) m.direct.setMic(null);
-        broadcast();
-      },
+      async voiceStart() { await mesh.start(); self.voice = true; broadcast(); },
+      voiceStop() { mesh.stop(); self.voice = false; broadcast(); },
       // Lobby-free invite for one friend: hand them invite.code, then paste their reply into accept().
       async directInvite() {
-        const inv = await PS.direct.hostInvite();
+        const inv = await PS.direct.hostInvite(self.name);
         return {
-          code: inv.code, pc: inv.pc,
+          code: inv.code, pc: inv.pc, sharedRelay: inv.sharedRelay,
           async accept(text) {
             const { ctrl, input } = await inv.accept(text);
             onConn(input);
@@ -340,12 +277,12 @@
           },
         };
       },
-      unlockAudio() { voice.unlock(); },
+      unlockAudio() { mesh.unlock(); },
       destroy() {
         destroyed = true;
         clearInterval(statsTimer); clearInterval(rosterTimer);
         for (const m of members.values()) if (m.ctrl && m.ctrl.open) m.ctrl.send({ t: 'ended' });
-        voice.stop();
+        mesh.stop();
         setTimeout(() => peer && peer.destroy(), 300);
       },
     };
@@ -359,13 +296,11 @@
     let peer = null, ctrl = null, input = null, alive = true, tries = 0, retryT = null;
     let seq = 0, last = { b: 0, a: [0, 0, 0, 0] }, gameCall = null;
     let rtt = null, hostQ = {}, fps = null, path = null;
-    const voice = new Voice();
+    const mesh = new PS.Mesh(PS.clientId, (to, d) => { if (ctrl && ctrl.open) ctrl.send({ t: 'sig', to, d }); });
 
     function newPeer() {
       try { if (peer) peer.destroy(); } catch (e) {}
       peer = new Peer(peerOpts());
-      voice.peer = peer;
-      voice.calls.clear();
       peer.on('open', connect);
       peer.on('call', (call) => {
         if (call.metadata && call.metadata.kind === 'game') {
@@ -373,7 +308,7 @@
           gameCall = call;
           call.answer();
           call.on('stream', (s) => h.stream(s));
-        } else voice.incoming(call);
+        } else call.close();
       });
       peer.on('disconnected', () => { if (alive && !peer.destroyed) setTimeout(() => peer.disconnected && !peer.destroyed && peer.reconnect(), 1000); });
       peer.on('error', (e) => {
@@ -418,13 +353,14 @@
         case 'welcome':
           h.status(null);
           h.welcome(d);
-          if (voice.on) ctrl.send({ t: 'voice', on: true });
+          if (mesh.on) ctrl.send({ t: 'voice', on: true });
           send();
           break;
         case 'roster':
           h.roster(d);
-          if (peer) voice.sync(d.roster, peer.id);
+          mesh.sync(d.roster);
           break;
+        case 'sig': mesh.handle(d.from, d.d); break;
         case 'pong': rtt = Date.now() - d.ts; report(); break;
         case 'q': hostQ = d; report(); break;
         case 'kick': end('The host removed you from the room.'); break;
@@ -437,7 +373,7 @@
     function end(msg) {
       alive = false;
       clearInterval(timer);
-      voice.stop();
+      mesh.stop();
       h.ended(msg);
       setTimeout(() => { try { peer.destroy(); } catch (e) {} }, 300);
     }
@@ -464,11 +400,11 @@
 
     return {
       sendInput(s) { last = s; send(); },
-      get voiceOn() { return voice.on; },
-      async voiceStart() { await voice.start(); if (ctrl && ctrl.open) ctrl.send({ t: 'voice', on: true }); },
-      voiceStop() { voice.stop(); if (ctrl && ctrl.open) ctrl.send({ t: 'voice', on: false }); },
-      unlockAudio() { voice.unlock(); },
-      leave() { alive = false; clearInterval(timer); clearTimeout(retryT); voice.stop(); try { peer.destroy(); } catch (e) {} },
+      get voiceOn() { return mesh.on; },
+      async voiceStart() { await mesh.start(); if (ctrl && ctrl.open) ctrl.send({ t: 'voice', on: true }); },
+      voiceStop() { mesh.stop(); if (ctrl && ctrl.open) ctrl.send({ t: 'voice', on: false }); },
+      unlockAudio() { mesh.unlock(); },
+      leave() { alive = false; clearInterval(timer); clearTimeout(retryT); mesh.stop(); try { peer.destroy(); } catch (e) {} },
     };
   }
 
@@ -477,13 +413,14 @@
   // =====================================================================
   function joinDirect(inviteText, name, want, h) {
     let link = null, ctrl = null, input = null, alive = true;
-    let seq = 0, last = { b: 0, a: [0, 0, 0, 0] }, rtt = null, hostQ = {}, fps = null, path = null, mic = null;
+    let seq = 0, last = { b: 0, a: [0, 0, 0, 0] }, rtt = null, hostQ = {}, fps = null, path = null;
+    const mesh = new PS.Mesh(PS.clientId, (to, d) => { if (ctrl && ctrl.open) ctrl.send({ t: 'sig', to, d }); });
 
     const end = (msg) => {
       if (!alive) return;
       alive = false;
       clearInterval(timer);
-      if (mic) mic.getTracks().forEach((t) => t.stop());
+      mesh.stop();
       h.ended(msg);
       setTimeout(() => link && link.close(), 300);
     };
@@ -493,8 +430,9 @@
     function onData(d) {
       if (!d || !d.t) return;
       switch (d.t) {
-        case 'welcome': h.status(null); h.welcome(d); if (mic) ctrl.send({ t: 'voice', on: true }); send(); break;
-        case 'roster': h.roster(d); break;
+        case 'welcome': h.status(null); h.welcome(d); if (mesh.on) ctrl.send({ t: 'voice', on: true }); send(); break;
+        case 'roster': h.roster(d); mesh.sync(d.roster); break;
+        case 'sig': mesh.handle(d.from, d.d); break;
         case 'pong': rtt = Date.now() - d.ts; report(); break;
         case 'q': hostQ = d; report(); break;
         case 'kick': end('The host removed you from the room.'); break;
@@ -541,20 +479,11 @@
 
     return {
       sendInput(s) { last = s; send(); },
-      get voiceOn() { return !!mic; },
-      async voiceStart() {
-        mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-        if (link) link.setMic(mic);
-        if (ctrl && ctrl.open) ctrl.send({ t: 'voice', on: true });
-      },
-      voiceStop() {
-        if (mic) mic.getTracks().forEach((t) => t.stop());
-        mic = null;
-        if (link) link.setMic(null);
-        if (ctrl && ctrl.open) ctrl.send({ t: 'voice', on: false });
-      },
-      unlockAudio() { document.querySelectorAll('audio').forEach((a) => a.play().catch(() => {})); },
-      leave() { alive = false; clearInterval(timer); if (mic) mic.getTracks().forEach((t) => t.stop()); if (link) link.close(); },
+      get voiceOn() { return mesh.on; },
+      async voiceStart() { await mesh.start(); if (ctrl && ctrl.open) ctrl.send({ t: 'voice', on: true }); },
+      voiceStop() { mesh.stop(); if (ctrl && ctrl.open) ctrl.send({ t: 'voice', on: false }); },
+      unlockAudio() { mesh.unlock(); },
+      leave() { alive = false; clearInterval(timer); mesh.stop(); if (link) link.close(); },
     };
   }
 

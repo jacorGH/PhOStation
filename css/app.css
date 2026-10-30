@@ -464,3 +464,5 @@ body.ejs-ui #pad { visibility: hidden; }
 
 .link[hidden] { display: none; }
 .big.tight { margin-top: 10px; align-items: center; }
+#modal h3 { font: 700 17px/1.2 var(--round); margin: 22px 0 8px; }
+#modal .step b + * , #modal .step i { font-style: normal; color: var(--porcelain); }
