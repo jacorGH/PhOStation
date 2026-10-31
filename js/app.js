@@ -1257,7 +1257,17 @@
       PS.ice.clearCache();
       if (!url) { say('Relay turned off.'); return; }
       say('Asking your Worker for relay logins…');
-      try { await PS.ice.refresh(true); } catch (e) { say(e.message, 'bad'); return; }
+      if (!/^https:\/\//i.test(url)) { say('The Worker address should start with https:// (copy it from the Worker\u2019s overview page).', 'bad'); return; }
+      try { await PS.ice.refresh(true); }
+      catch (e) {
+        const m = e.message || '';
+        const hint = /access code/i.test(m) ? ' Make sure it matches ACCESS_CODE in the Worker\u2019s settings.'
+          : /missing/i.test(m) ? ' In the Worker: Settings, Variables and Secrets. Check the names, then Deploy.'
+          : /refused/i.test(m) ? ' Copy the Turn Token ID and API Token again from Realtime, TURN Server; they may be swapped.'
+          : /reached/i.test(m) ? ' Check the address and that the Worker is deployed.' : '';
+        say(m + hint, 'bad');
+        return;
+      }
     } else {
       const url = $('#turnUrl').value.trim();
       P.turn = url ? { url, user: $('#turnUser').value.trim(), pass: $('#turnPass').value } : null;
@@ -1281,16 +1291,32 @@
 
   function relayGuide() {
     openModal(`<h2>Set up your free relay</h2>
-      <p class="note">Pick one. Cloudflare is easiest and can be done from your phone in about 10 minutes.</p>
+      <p class="note">Cloudflare is easiest and works from your phone in about 10 minutes. You won\u2019t need to set any permissions: the TURN app comes with its own login.</p>
+
+      <div class="callout"><b>Skip \u201cAPI Tokens\u201d</b>The <i>My Profile \u203a API Tokens</i> page (with Permissions and Account Resources) isn\u2019t needed. If you\u2019re on it, back out without creating anything. The two values you need come from the TURN Server page in step 2.</div>
+
       <h3>Cloudflare (free, recommended)</h3>
-      <p class="note">Cloudflare\u2019s relay is free for the first 1,000 GB each month, far more than gaming uses. A tiny Worker (also free) keeps your Cloudflare key secret and hands PhoStation short-lived logins.</p>
+      <p class="note">Free for the first 1,000 GB each month, far more than gaming uses. A tiny Worker (also free) keeps your Cloudflare key secret and hands PhoStation short-lived logins.</p>
       <div class="step"><span class="n">1</span><div><b>Make a free Cloudflare account</b>Sign up at dash.cloudflare.com.</div></div>
-      <div class="step"><span class="n">2</span><div><b>Create a TURN key</b>In the dashboard, find Realtime, then TURN Server, and create one. Copy the <i>Turn Token ID</i> and <i>API Token</i> (the token is only shown once).</div></div>
-      <div class="step"><span class="n">3</span><div><b>Create a Worker</b>Workers &amp; Pages, Create, start from the Hello World template, name it e.g. phostation-relay, Deploy. Then Edit code, replace everything with <i>relay/cloudflare-worker.js</i> from this project, and Deploy.</div></div>
-      <div class="step"><span class="n">4</span><div><b>Add three settings to the Worker</b>Settings, Variables and Secrets: <i>TURN_KEY_ID</i> (the Token ID), <i>TURN_KEY_API_TOKEN</i> (the API token, as a secret) and <i>ACCESS_CODE</i> (any password you make up, as a secret).</div></div>
-      <div class="step"><span class="n">5</span><div><b>Connect PhoStation</b>Copy the Worker\u2019s address (ends in workers.dev), paste it and your access code here, and tap Save and test.</div></div>
-      <h3>Your own server</h3>
-      <p class="note">For a relay that\u2019s entirely yours, run <i>relay/setup-coturn.sh</i> on a free cloud server (for example Oracle Cloud\u2019s Always Free tier). It installs the coturn relay, opens the ports and prints a setup link; open that link on your phone and the relay is saved. Details are in <i>relay/README.md</i>.</p>
+      <div class="step"><span class="n">2</span><div><b>Create a TURN app</b>Open the menu (top left), tap <i>Realtime</i>, then under <i>TURN Server</i> tap <i>Create</i>. Name it PhoStation and tap Create. You\u2019ll see two values:
+        <ul class="kv"><li><i>Turn Token ID</i> \u2192 becomes <code>TURN_KEY_ID</code></li><li><i>API Token</i> \u2192 becomes <code>TURN_KEY_API_TOKEN</code></li></ul>
+        Copy both into Notes now. The API Token is only shown once; if you lose it, create a new TURN app.</div></div>
+      <div class="step"><span class="n">3</span><div><b>Create the Worker</b>Menu, <i>Workers &amp; Pages</i>, <i>Create</i>, start from the <i>Hello World</i> template, name it phostation-relay, and tap <i>Deploy</i>. Then tap <i>Edit code</i>, delete everything, paste in <i>relay/cloudflare-worker.js</i> from this project, and tap <i>Deploy</i> again.</div></div>
+      <div class="step"><span class="n">4</span><div><b>Give the Worker its three settings</b>In the Worker, open <i>Settings</i>, then <i>Variables and Secrets</i>, and add:
+        <ul class="kv"><li><code>TURN_KEY_ID</code>: the Turn Token ID (type Text)</li><li><code>TURN_KEY_API_TOKEN</code>: the API Token (type <b>Secret</b>)</li><li><code>ACCESS_CODE</code>: a password you make up (type <b>Secret</b>)</li></ul>
+        Names must match exactly, in capitals. Tap <i>Deploy</i> to save them.</div></div>
+      <div class="step"><span class="n">5</span><div><b>Connect PhoStation</b>Copy the Worker\u2019s address from its overview page (it ends in <i>workers.dev</i>). Paste it and your access code into Settings, Your relay, and tap <i>Save and test</i>.</div></div>
+
+      <h3>If Save and test complains</h3>
+      <ul class="kv">
+        <li><i>Wrong access code</i>: the code in PhoStation doesn\u2019t match <code>ACCESS_CODE</code>.</li>
+        <li><i>Missing TURN_KEY_ID\u2026</i>: a setting is misspelled or wasn\u2019t deployed.</li>
+        <li><i>Cloudflare refused the TURN key</i>: the ID and token are swapped or have a stray space. Paste them again.</li>
+        <li><i>Couldn\u2019t be reached</i>: check the Worker address, including https://.</li>
+      </ul>
+
+      <h3>Your own server instead</h3>
+      <p class="note">For a relay that\u2019s entirely yours, run <i>relay/setup-coturn.sh</i> on a free cloud server (for example Oracle Cloud\u2019s Always Free tier). It installs the coturn relay and prints a setup link to open on your phone. Details are in <i>relay/README.md</i>.</p>
       <button class="big primary tight" data-close><b>Got it</b></button>`);
   }
 

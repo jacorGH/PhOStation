@@ -8,8 +8,12 @@ Pick one option.
 
 Cloudflare's TURN relay is free for the first 1,000 GB each month. A PS1 stream uses roughly 0.5 to 1.5 GB an hour per friend, and only when a direct connection fails, so this is effectively free for gaming. A tiny Worker (free plan: 100,000 requests a day) keeps your Cloudflare key secret and gives PhoStation short-lived logins. All of this can be done from a phone.
 
+> **No permissions or API Tokens needed.** Skip *My Profile > API Tokens* (the page with Permissions, Account Resources and Token expiration). The TURN app in step 2 comes with its own two values, and that's all the Worker uses.
+
 1. Create a free account at dash.cloudflare.com.
-2. In the dashboard, open **Realtime**, then **TURN Server**, and create a TURN key. Copy the **Turn Token ID** and the **API Token**. The API token is only shown once.
+2. Open the dashboard menu (top left), tap **Realtime**, then under **TURN Server** tap **Create**. Name it and create it. Copy both values it shows; the API Token is only shown once:
+   - **Turn Token ID** becomes `TURN_KEY_ID`
+   - **API Token** becomes `TURN_KEY_API_TOKEN`
 3. Open **Workers & Pages**, create a Worker from the **Hello World** template, name it something like `phostation-relay`, and deploy it.
 4. Choose **Edit code**, replace everything with the contents of `cloudflare-worker.js`, and deploy again.
 5. In the Worker's **Settings > Variables and Secrets**, add:
@@ -17,9 +21,19 @@ Cloudflare's TURN relay is free for the first 1,000 GB each month. A PS1 stream 
    - `TURN_KEY_API_TOKEN`: the API token (type: Secret)
    - `ACCESS_CODE`: any password you make up (type: Secret)
    - optional `ALLOWED_ORIGIN`: your PhoStation site, e.g. `https://yourname.github.io`
+
+   Names must match exactly, in capitals. Deploy afterwards so the Worker picks them up.
 6. In PhoStation: **Settings > Your relay > Cloudflare**, paste the Worker address (ends in `workers.dev`) and your access code, then tap **Save and test**.
 
 Dashboard menu names change from time to time. If you can't find TURN, search the dashboard for "TURN".
+
+**If Save and test complains**
+- *Wrong access code*: PhoStation's access code doesn't match `ACCESS_CODE`.
+- *Missing TURN_KEY_ID…*: a setting is misspelled or wasn't deployed.
+- *Cloudflare refused the TURN key*: the ID and token are swapped or have a stray space.
+- *Couldn't be reached*: check the Worker address, including `https://`.
+
+(Creating TURN keys through Cloudflare's API instead of the dashboard would need an API token with the Calls Write permission. PhoStation doesn't need that.)
 
 ## Option B: your own server
 

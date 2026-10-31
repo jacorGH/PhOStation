@@ -486,3 +486,10 @@ body.ejs-ui #pad { visibility: hidden; }
 .big.tight { margin-top: 10px; align-items: center; }
 #modal h3 { font: 700 17px/1.2 var(--round); margin: 22px 0 8px; }
 #modal .step b + * , #modal .step i { font-style: normal; color: var(--porcelain); }
+
+.callout { background: rgba(234,166,74,.12); border: 1px solid rgba(234,166,74,.45); border-radius: 14px; padding: 12px 14px; margin: 12px 0 4px; font-size: 14.5px; }
+.callout b { display: block; margin-bottom: 4px; font: 700 16px/1.25 var(--round); }
+.callout i, .kv i { font-style: normal; color: var(--porcelain); font-weight: 600; }
+ul.kv { margin: 8px 0; padding-left: 18px; font-size: 14.5px; }
+ul.kv li { margin: 4px 0; }
+#modal code { font: 12.5px ui-monospace, Menlo, monospace; background: var(--glaze-deep); border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px; white-space: nowrap; }
