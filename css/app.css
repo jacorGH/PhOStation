@@ -302,8 +302,28 @@ body.ejs-ui #pad { visibility: hidden; }
 }
 @keyframes rise { from { transform: translateY(30px); opacity: .4; } }
 .grab { width: 40px; height: 5px; border-radius: 3px; background: var(--line); margin: 4px auto 6px; }
+.sheet-head {
+  position: sticky; top: -8px; z-index: 2; display: flex; align-items: center; gap: 10px;
+  margin: -8px calc(-1 * max(20px, var(--sl))) 4px; padding: 8px max(20px, var(--sl)) 8px;
+  background: var(--glaze); border-bottom: 1px solid var(--line);
+}
+.sheet-head .grab { position: absolute; left: 50%; top: 4px; transform: translateX(-50%); margin: 0; width: 60px; height: 14px; background: none; cursor: pointer; }
+.sheet-head .grab::after { content: ""; position: absolute; left: 10px; right: 10px; top: 4px; height: 5px; border-radius: 3px; background: var(--line); }
+.sheet-head h2 { flex: 1; margin: 10px 0 0; font: 800 20px/1 var(--round); }
+.sheet-x { width: 40px; height: 40px; margin-top: 6px; border-radius: 20px; border: 1px solid var(--line); background: var(--glaze-lift); font-size: 24px; line-height: 1; }
+.sheet-done { align-items: center; margin-top: 18px; }
+.big.rejoin { border-color: rgba(121,196,138,.5); background: rgba(121,196,138,.1); }
+.big.rejoin[hidden] { display: none; }
+.swaplist { display: grid; gap: 8px; margin: 6px 0 12px; }
+.swaplist button { text-align: left; border: 1px solid var(--line); border-radius: 14px; background: var(--glaze-deep); padding: 12px 14px; }
+.swaplist button b { display: block; font-weight: 650; }
+.swaplist button small { color: var(--muted); font-size: 13px; }
+.swaplist button.cur { border-color: var(--broth); }
+.filebtn { position: relative; display: block; text-align: center; }
+.filebtn input { position: absolute; inset: 0; opacity: 0; width: 100%; }
+#game iframe { width: 100%; height: 100%; border: 0; display: block; background: #000; }
 .sheet h3, #settingsBody h3 { font: 700 17px/1.2 var(--round); margin: 24px 0 10px; }
-.sheet h3:first-of-type { margin-top: 8px; }
+.sheet h3:first-of-type { margin-top: 14px; }
 
 .ports { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
 .port {

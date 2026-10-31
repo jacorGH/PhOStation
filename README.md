@@ -33,6 +33,7 @@ BIOS is optional. The core's built-in BIOS runs most games, and a real BIOS (e.g
 - Connection stats (ping, fps, stream tier) and automatic stream quality per player, or a fixed tier
 - Save states (3 slots + quick save) with picture previews, restart, fast forward, and the full EmulatorJS menu on request
 - Autosave every 3 minutes and whenever the app goes to the background. Starting a game offers to pick up where you left off, and the home screen has a one-tap Continue for your last game.
+- Change game without ending the session (menu > Game > Change game). Everyone stays connected and keeps their port; your progress is autosaved first.
 - Pause for everyone (friends see a Paused banner). Solo games pause automatically while the menu is open.
 - Hold-to-fast-forward button on the pad for the host
 - Turbo buttons: pick any of Cross, Circle, Square, Triangle, L1, R1, L2, R2 to auto-repeat while held
@@ -47,6 +48,8 @@ BIOS is optional. The core's built-in BIOS runs most games, and a real BIOS (e.g
 **Room codes** use a free lobby server (PeerJS) to introduce players, then the game streams peer-to-peer.
 
 **Direct invites** skip the lobby entirely, like old Hamachi/LAN setups where you swapped IP addresses. The host taps Direct invite and sends the link; the friend opens it and sends back a reply code; the host pastes it and you're connected. The codes contain each side's IP addresses and ports, and WebRTC punches through both NATs. Works on the same Wi-Fi (LAN) or across the internet. Each invite is for one friend; if a direct link drops, make a new invite (their port is held for 2 minutes). Invites are about 680 characters (about 900 with relay logins) and replies about 240.
+
+**Dropped players get their slot back.** A player who drops is held in their port for 2 minutes. Rejoining from the same phone (home screen > Rejoin) restores it, and so does rejoining with the same name from anywhere. Silent connections (locked phone, closed app) are noticed within about 10 seconds.
 
 **The host is the broker.** Once friends are connected, the host passes connection messages between them, so voice chat is a full mesh (everyone hears everyone) with no lobby server, whether friends joined by room code or direct invite.
 
@@ -68,6 +71,7 @@ BIOS is optional. The core's built-in BIOS runs most games, and a real BIOS (e.g
 
 ```
 index.html          app shell
+emu.html            emulator frame (replaced when changing games)
 css/app.css         styles
 js/boot.js          capture/audio hooks, prefs, storage (loads before EmulatorJS)
 js/library.js       saved games (IndexedDB + private files)

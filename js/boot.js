@@ -64,6 +64,18 @@
     try { sessionStorage.setItem('phostation.cid', cid); } catch (e) {}
   }
   PS.clientId = cid;
+  // Identity for a room, kept on this device, so reopening the app or the tab still counts as
+  // the same player and gets their port back.
+  PS.clientIdFor = (room) => {
+    let map = {};
+    try { map = JSON.parse(localStorage.getItem('phostation.ids') || '{}'); } catch (e) {}
+    const now = Date.now();
+    for (const k in map) if (now - map[k].at > 30 * 864e5) delete map[k];
+    if (!map[room]) map[room] = { id: (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + now.toString(36)) };
+    map[room].at = now;
+    try { localStorage.setItem('phostation.ids', JSON.stringify(map)); } catch (e) {}
+    return (PS.clientId = map[room].id);
+  };
 
   // ---------- 3b. IndexedDB key/value ----------
   let dbp = null;

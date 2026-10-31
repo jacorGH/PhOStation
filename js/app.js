@@ -81,6 +81,17 @@
     return d === 1 ? 'yesterday' : `${d} days ago`;
   }
   renderContinue();
+  // Rejoin the last room (within a few hours): same device, same player slot.
+  if (P.lastRoom && Date.now() - P.lastRoom.at < 6 * 3600e3) {
+    $('#rejoinBtn').hidden = false;
+    $('#rejoinTitle').textContent = `Rejoin room ${P.lastRoom.code}`;
+  }
+  $('#rejoinBtn').onclick = () => {
+    $('#codeInput').value = P.lastRoom.code;
+    S.want = P.lastRoom.want || 'player';
+    $$('#wantSeg button').forEach((x) => { x.classList.toggle('on', x.dataset.want === S.want); x.setAttribute('aria-checked', x.dataset.want === S.want); });
+    $('#joinBtn').click();
+  };
   $('#goJoin').onclick = () => { show('join'); setTimeout(() => $('#codeInput').focus(), 50); };
   $('#goSettings').onclick = () => { renderSettings(); show('settings'); };
   $$('[data-back]').forEach((b) => (b.onclick = () => {
@@ -269,6 +280,13 @@
   }
 
   const PICK_HINT = '.chd, .pbp, .bin + .cue, .iso, or a .zip, .7z or .rar. It stays in your games list.';
+  // Adds picked files to the games list (unpacking/compressing archives). Throws on failure.
+  async function addGameFiles(fs, status) {
+    const archive = fs.length === 1 && (await PS.unpack.kind(fs[0]));
+    if (archive) return addArchive(fs[0], status);
+    status('Saving to your games…');
+    return PS.library.add(fs, $('#multitapChk').checked);
+  }
   $('#gameFile').onchange = async (e) => {
     const fs = [...e.target.files];
     e.target.value = '';
@@ -277,10 +295,7 @@
     const status = (t) => ($('#gameName').textContent = t);
     $('#gamePick').classList.add('set');
     try {
-      const archive = fs.length === 1 && (await PS.unpack.kind(fs[0]));
-      let entry;
-      if (archive) entry = await addArchive(fs[0], status);
-      else { status('Saving to your games…'); entry = await PS.library.add(fs, $('#multitapChk').checked); }
+      const entry = await addGameFiles(fs, status);
       await selectGame(entry.id);
       toast(`Saved \u201c${entry.title}\u201d to your games`);
     } catch (err) {
@@ -434,7 +449,14 @@
     setWaiting(null);
     applyView();
     // Video is only captured and encoded once a friend is actually connected.
-    S.net.setRunning(() => PS.emu.captureStream());
+    if (S.streamSet) {
+      S.net.swapStream(() => PS.emu.captureStream());
+      S.net.notify && S.net.notify(`Now playing ${PS.emu.title}`);
+    } else {
+      S.net.setRunning(() => PS.emu.captureStream());
+      S.streamSet = true;
+    }
+    S.ff = false;
     if (S.gameId) {
       PS.library.update(S.gameId, { stateKey: PS.emu.gameName }).catch(() => {});
       const g = (await PS.library.list().catch(() => [])).find((x) => x.id === S.gameId);
@@ -453,6 +475,58 @@
         ? 'Your screen is limited to 30 fps (Low Power Mode?). The game now runs on its own 60 fps timer.'
         : 'Your screen is limited to 30 fps, which halves game speed. Turn off Low Power Mode in Settings, Battery.', 7000);
     }, 4000);
+  }
+
+  // ---------- change game without ending the session ----------
+  async function swapGameMenu() {
+    const games = await PS.library.list().catch(() => []);
+    openModal(`<h2>Change game</h2>
+      <p class="note">Everyone stays connected and keeps their port. Your progress in ${esc(PS.emu.title)} is saved first.</p>
+      <div class="swaplist">${games.map((g) => `<button data-swap="${g.id}" class="${g.id === S.gameId ? 'cur' : ''}" ${g.id === S.gameId ? 'disabled' : ''}>
+        <b>${esc(g.title)}</b><small>${g.id === S.gameId ? 'Playing now' : fmtWhen(g.played).replace(/^./, (c) => c.toUpperCase())}</small></button>`).join('')}</div>
+      <label class="ghost wide filebtn">Add another game<input type="file" id="swapFile" multiple></label>
+      <p class="dstatus" id="swapStatus"></p>`);
+    $('#modalBody').onclick = (e) => {
+      const b = e.target.closest('[data-swap]');
+      if (b) doSwap(b.dataset.swap);
+    };
+    $('#swapFile').onchange = async (e) => {
+      const fs = [...e.target.files];
+      e.target.value = '';
+      if (!fs.length || S.busy) return;
+      const status = (t) => { const el = $('#swapStatus'); if (el) el.textContent = t; };
+      try { const entry = await addGameFiles(fs, status); doSwap(entry.id); }
+      catch (err) { status(err.message || 'That game couldn\u2019t be added.'); }
+    };
+  }
+
+  async function doSwap(id) {
+    if (S.swapping || id === S.gameId) return;
+    S.swapping = true;
+    closeModal();
+    closeSheet();
+    try {
+      setWaiting('Saving your progress…');
+      try { await PS.emu.saveState('auto'); } catch (e) {}
+      hideResume();
+      await selectGame(id); // loads files, unpacks older packed games, restores per-game settings
+      if (S.gameId !== id) throw new Error('That game couldn\u2019t be opened.');
+      S.multitap = $('#multitapChk').checked;
+      S.net.setMaxPorts(S.multitap ? 4 : 2);
+      PS.library.update(id, { played: Date.now(), multitap: S.multitap, perf: S.perf }).catch(() => {});
+      if (PS.emu.paused) { PS.emu.setPaused(false); S.net.setPaused && S.net.setPaused(false); $('#pausedBanner').hidden = true; }
+      S.running = false;
+      S.net.notify && S.net.notify('The host is changing the game…');
+      setWaiting('Loading the new game…');
+      await PS.emu.load({
+        files: S.files, bios: S.bios, multitap: S.multitap, perf: S.perf,
+        handlers: { progress: setWaiting, started: onGameStarted },
+      });
+    } catch (err) {
+      setWaiting(null);
+      toast(err.message || 'The game couldn\u2019t be changed.', 5000);
+    }
+    S.swapping = false;
   }
 
   // ---------- resume & autosave ----------
@@ -538,6 +612,7 @@
   function applyLook() {
     const play = $('#play');
     play.dataset.filter = P.filter || 'sharp';
+    PS.emu.setFilter(P.filter || 'sharp');
     const pad = $('#pad');
     pad.style.setProperty('--pad-scale', P.padSize || 1);
     pad.style.setProperty('--pad-alpha', P.padAlpha == null ? 1 : P.padAlpha);
@@ -651,6 +726,7 @@
       $('#gStatus').className = 'dstatus';
       S.role = 'guest';
       S.code = 'DIRECT';
+      PS.clientIdFor('direct');
       S.want = want;
       enterPlay();
       $('#roomChip').textContent = 'Direct';
@@ -697,6 +773,8 @@
     if (code.length !== 5) { toast('Room codes have 5 characters'); return; }
     S.role = 'guest';
     S.code = code;
+    PS.clientIdFor(code); // same id every time this device joins this room
+    P.lastRoom = { code, want: S.want, at: Date.now() };
     enterPlay();
     setWaiting('Connecting…');
     await freshRelay();
@@ -717,6 +795,7 @@
       applyView();
     },
     lost() { setWaiting('Connection lost. Reconnecting, your port is held…'); },
+    note(msg) { toast(msg, 3500); },
     stats({ rtt, fps, tier, path }) {
       const parts = [];
       if (rtt != null) parts.push(`${rtt} ms`);
@@ -981,6 +1060,7 @@
         html += `<h3>Game</h3><div class="row2">
           <button class="ghost" data-do="ff">${S.ff ? 'Stop fast forward' : 'Fast forward'}</button>
           <button class="ghost" data-do="restart">Restart</button></div>
+          <button class="ghost wide" data-do="swap">Change game</button>
           <button class="ghost wide" data-do="ejs">${S.ejsUi ? 'Hide emulator menu' : 'Show emulator menu'}</button>`;
         html += cheatsHtml();
       }
@@ -1057,8 +1137,9 @@
         case 'ejs':
           S.ejsUi = !S.ejsUi;
           document.body.classList.toggle('ejs-ui', S.ejsUi);
+          PS.emu.setEjsUi(S.ejsUi);
           applyView(); closeSheet();
-          if (S.ejsUi) toast('Emulator menu shown. Open the menu again to hide it.');
+          if (S.ejsUi) toast('Emulator menu shown. Open PhoStation\u2019s menu (top right) to hide it.');
           break;
         case 'perf':
           S.perf = P.perf = t.dataset.v;
@@ -1067,6 +1148,7 @@
           renderSheet();
           break;
         case 'uncap': S.uncapped = PS.emu.setUncapped(t.checked) && t.checked; break;
+        case 'swap': swapGameMenu(); break;
         case 'pause': S.autoPaused = false; setPause(!PS.emu.paused); renderSheet(); break;
         case 'shot': await takeScreenshot(); break;
         case 'filter': P.filter = t.dataset.v; applyLook(); renderSheet(); break;

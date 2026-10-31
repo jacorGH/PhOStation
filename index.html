@@ -34,6 +34,7 @@
     <div class="choices">
       <button class="big continue" id="continueBtn" hidden><span class="thumb" id="continueThumb"></span><span class="txt"><b id="continueTitle">Continue</b><small id="continueSub"></small></span></button>
       <button class="big primary" id="goHost"><b>Host a game</b><small>You run the disc and invite up to three friends</small></button>
+      <button class="big rejoin" id="rejoinBtn" hidden><b id="rejoinTitle">Rejoin</b><small>Picks up your old player slot</small></button>
       <button class="big" id="goJoin"><b>Join a room</b><small>Type the 5-letter code your friend sent</small></button>
     </div>
     <p class="notice" data-crash hidden></p>
@@ -144,7 +145,11 @@
 <!-- ============ SHEET ============ -->
 <div id="sheetWrap" hidden>
   <div class="backdrop" data-do="close"></div>
-  <div class="sheet" role="dialog" aria-label="Menu"><div class="grab"></div><div id="sheetBody"></div></div>
+  <div class="sheet" role="dialog" aria-label="Menu">
+    <div class="sheet-head"><span class="grab" data-do="close"></span><h2>Menu</h2><button class="sheet-x" data-do="close" aria-label="Close menu">×</button></div>
+    <div id="sheetBody"></div>
+    <button class="big sheet-done" data-do="close"><b>Back to the game</b></button>
+  </div>
 </div>
 
 <div id="modal" hidden>

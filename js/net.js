@@ -78,6 +78,7 @@
       if (conn.label === 'input') {
         conn.on('data', (d) => {
           const m = members.get(cid);
+          if (m) m.lastSeen = Date.now();
           if (!m || !m.connected || m.port == null || !d) return;
           if (m.inputConn !== conn) { m.inputConn = conn; m.seq = -1; }
           if (d.s <= m.seq) return;
@@ -94,8 +95,22 @@
     function onCtrl(conn, cid, d) {
       if (!d || !d.t) return;
       let m = members.get(cid);
+      if (m) m.lastSeen = Date.now();
       switch (d.t) {
         case 'hello': {
+          // Same person on a new connection id (app reopened, storage cleared): recognise them by
+          // name if their old slot is held or has gone silent, so they get their port back.
+          if (!m) {
+            const nm = cleanName(d.name).toLowerCase();
+            const held = [...members.values()].find((x) => !x.isHost && x.name && x.name.toLowerCase() === nm
+              && (!x.connected || Date.now() - (x.lastSeen || 0) > 4000));
+            if (held) {
+              members.delete(held.clientId);
+              held.clientId = cid;
+              members.set(cid, held);
+              m = held;
+            }
+          }
           const returning = !!m;
           if (m) {
             clearTimeout(m.expire);
@@ -106,7 +121,7 @@
             members.set(cid, m);
             if (d.want === 'player') { const p = freePort(); if (p != null) { m.role = 'player'; m.port = p; } }
           }
-          Object.assign(m, { ctrl: conn, peerId: conn.peer, connected: true, voice: false, seq: -1, name: cleanName(d.name), goodStreak: 0, appliedTier: null, lastBytes: null });
+          Object.assign(m, { ctrl: conn, peerId: conn.peer, connected: true, voice: false, seq: -1, lastSeen: Date.now(), name: cleanName(d.name), goodStreak: 0, appliedTier: null, lastBytes: null });
           if (m.direct && m.direct !== conn.direct) m.direct.close();
           m.direct = conn.direct || null;
           conn.send({ t: 'welcome', port: m.port, role: m.role });
@@ -131,13 +146,18 @@
     function onClose(cid, conn) {
       const m = members.get(cid);
       if (!m || m.ctrl !== conn || !m.connected) return;
+      dropMember(m);
+    }
+    function dropMember(m) {
+      if (!m.connected) return;
       m.connected = false; m.voice = false;
+      if (m.ctrl) { const c = m.ctrl; m.ctrl = null; try { c.close(); } catch (e) {} }
       if (m.call) { m.call.close(); m.call = null; }
       if (m.direct) { m.direct.close(); m.direct = null; }
       if (m.port != null) PS.emu.releaseAll(m.port);
       broadcast();
       h.toast(`${m.name} dropped${m.port != null ? ' \u2014 holding P' + (m.port + 1) : ''}`);
-      m.expire = setTimeout(() => { if (!m.connected) { members.delete(cid); broadcast(); } }, 120000);
+      m.expire = setTimeout(() => { if (!m.connected && members.get(m.clientId) === m) { members.delete(m.clientId); broadcast(); } }, 120000);
     }
 
     async function callGuest(m) {
@@ -176,6 +196,9 @@
 
     async function statsTick() {
       if (destroyed) return;
+      for (const m of members.values()) {
+        if (!m.isHost && m.connected && m.lastSeen && Date.now() - m.lastSeen > 10000) dropMember(m);
+      }
       const c = PS.emu.canvas && PS.emu.canvas();
       if (c && c.width) canvasW = c.width;
       for (const m of members.values()) {
@@ -228,6 +251,27 @@
         for (const m of members.values()) if (!m.isHost && m.connected) callGuest(m);
         broadcast();
       },
+      // New game: switch everyone's video and audio to the new emulator without reconnecting.
+      async swapStream(factory) {
+        streamFactory = factory;
+        if (!streamP) return; // nobody was watching yet; the stream is made on demand
+        streamP = Promise.resolve().then(factory);
+        let s;
+        try { s = await streamP; } catch (e) { streamP = null; return; }
+        const tracks = { video: s.getVideoTracks()[0] || null, audio: s.getAudioTracks()[0] || null };
+        for (const m of members.values()) {
+          if (m.isHost || !m.connected) continue;
+          m.appliedTier = null;
+          if (m.direct) { m.direct.setStream(s); continue; }
+          const pc = m.call && m.call.peerConnection;
+          if (!pc) { callGuest(m); continue; }
+          const senders = pc.getSenders();
+          const kinds = new Set(senders.filter((x) => x.track).map((x) => x.track.kind));
+          if ((tracks.audio && !kinds.has('audio')) || (tracks.video && !kinds.has('video'))) { callGuest(m); continue; }
+          for (const snd of senders) if (snd.track && tracks[snd.track.kind]) snd.replaceTrack(tracks[snd.track.kind]).catch(() => callGuest(m));
+        }
+      },
+      notify(msg) { for (const m of members.values()) if (!m.isHost && m.connected && m.ctrl && m.ctrl.open) m.ctrl.send({ t: 'note', msg }); },
       setPort(cid, port) {
         const m = members.get(cid);
         if (!m) return;
@@ -347,8 +391,10 @@
       }, delay);
     }
 
+    let lastHeard = 0;
     function onData(d) {
       if (!d || !d.t) return;
+      lastHeard = Date.now();
       switch (d.t) {
         case 'welcome':
           h.status(null);
@@ -363,6 +409,7 @@
         case 'sig': mesh.handle(d.from, d.d); break;
         case 'pong': rtt = Date.now() - d.ts; report(); break;
         case 'q': hostQ = d; report(); break;
+        case 'note': h.note && h.note(d.msg); break;
         case 'kick': end('The host removed you from the room.'); break;
         case 'ended': end('The host ended the session.'); break;
         case 'denied': end(d.reason || 'The room refused the connection.'); break;
@@ -385,6 +432,8 @@
     const timer = setInterval(async () => {
       send(); // heartbeat keeps state correct even if a packet was lost
       if (++tick % 10) return; // every 2 s
+      // The host pings back every 2 s; 10 s of silence means the link is dead even if it looks open.
+      if (ctrl && ctrl.open && lastHeard && Date.now() - lastHeard > 10000) { lastHeard = 0; lost(); return; }
       if (ctrl && ctrl.open) ctrl.send({ t: 'ping', ts: Date.now() });
       if (gameCall && gameCall.peerConnection) {
         path = await PS.direct.pathType(gameCall.peerConnection);
@@ -435,6 +484,7 @@
         case 'sig': mesh.handle(d.from, d.d); break;
         case 'pong': rtt = Date.now() - d.ts; report(); break;
         case 'q': hostQ = d; report(); break;
+        case 'note': h.note && h.note(d.msg); break;
         case 'kick': end('The host removed you from the room.'); break;
         case 'ended': end('The host ended the session.'); break;
         case 'denied': end(d.reason || 'The room refused the connection.'); break;

@@ -14,7 +14,10 @@
   // EmulatorJS analog indices: [positive, negative] per axis (LX, LY, RX, RY)
   const AX = [[16, 17], [18, 19], [20, 21], [22, 23]];
 
-  const gm = () => window.EJS_emulator && window.EJS_emulator.gameManager;
+  // The emulator lives in an iframe (emu.html). W is that frame's window.
+  let frameEl = null, W = null, poll = null, look = { filter: 'sharp', ejsUi: false };
+  const emu = () => W && W.EJS_emulator;
+  const gm = () => emu() && emu().gameManager;
   const clean = (n) => n.replace(/[#<$+%>!`&*'|{}/\\?"=@:^\r\n]/g, '').trim() || 'game';
   const stripExt = (n) => n.replace(/\.[^.]+$/, '');
 
@@ -110,18 +113,43 @@
   }
   // Run the emulator on a 60 Hz timer instead of the (possibly throttled) display refresh.
   function setUncapped(on) {
-    const M = window.EJS_emulator && window.EJS_emulator.Module;
+    const M = emu() && emu().Module;
     const f = M && (M._emscripten_set_main_loop_timing || M.setMainLoopTiming);
     if (typeof f !== 'function') return false;
     try { on ? f(0, 16) : f(1, 1); return true; } catch (e) { return false; }
   }
   function canUncap() {
-    const M = window.EJS_emulator && window.EJS_emulator.Module;
+    const M = emu() && emu().Module;
     return !!(M && typeof (M._emscripten_set_main_loop_timing || M.setMainLoopTiming) === 'function');
   }
 
+  function makeFrame() {
+    return new Promise((res, rej) => {
+      const holder = document.getElementById('game');
+      holder.innerHTML = '';
+      const f = document.createElement('iframe');
+      f.src = 'emu.html';
+      f.title = 'Emulator';
+      f.setAttribute('allow', 'autoplay; gamepad; fullscreen');
+      f.onload = () => res(f);
+      f.onerror = () => rej(new Error('The emulator frame didn\u2019t load.'));
+      holder.appendChild(f);
+    });
+  }
+  function applyLook() {
+    try {
+      W.document.documentElement.dataset.filter = look.filter;
+      W.document.body.classList.toggle('ejs-ui', look.ejsUi);
+    } catch (e) {}
+  }
+  // Touches land on the main page, so wake the frame's audio from here.
+  ['pointerdown', 'touchend', 'keydown'].forEach((ev) => addEventListener(ev, () => {
+    try { W && W.PS && W.PS.audio.contexts.forEach((c) => c.state === 'suspended' && c.resume().catch(() => {})); } catch (e) {}
+  }, { capture: true, passive: true }));
+
   async function load(opts) {
     handlers = opts.handlers || {};
+    if (frameEl) await unload();
     const files = [...opts.files];
     const archive = files.length === 1 && isArchive(files[0]);
     const p = archive ? null : plan(files);
@@ -129,16 +157,20 @@
     gameName = clean(PS.emu.title);
     crumb('core');
 
-    window.EJS_player = '#game';
-    window.EJS_core = 'psx';
-    window.EJS_pathtodata = DATA;
+    frameEl = await makeFrame();
+    W = frameEl.contentWindow;
+    applyLook();
+
+    W.EJS_player = '#game';
+    W.EJS_core = 'psx';
+    W.EJS_pathtodata = DATA;
     // Only fetched by EmulatorJS for .zip/.7z, or if the direct write can't be installed.
-    window.EJS_gameUrl = URL.createObjectURL(files[0]);
-    window.EJS_gameName = archive ? gameName : clean(files[0].name);
-    window.EJS_startOnLoaded = true;
-    window.EJS_color = '#eaa64a';
-    window.EJS_defaultOptions = Object.assign(perfOpts(opts.perf), multitapOpts(!!opts.multitap));
-    if (opts.bios) window.EJS_biosUrl = await prepareBios(opts.bios);
+    W.EJS_gameUrl = URL.createObjectURL(files[0]);
+    W.EJS_gameName = archive ? gameName : clean(files[0].name);
+    W.EJS_startOnLoaded = true;
+    W.EJS_color = '#eaa64a';
+    W.EJS_defaultOptions = Object.assign(perfOpts(opts.perf), multitapOpts(!!opts.multitap));
+    if (opts.bios) W.EJS_biosUrl = await prepareBios(opts.bios);
 
     const fireStarted = () => {
       if (started) return;
@@ -146,15 +178,16 @@
       crumb(null);
       handlers.started && handlers.started();
     };
-    window.EJS_onGameStart = fireStarted;
-    const poll = setInterval(() => {
-      if (window.EJS_emulator && window.EJS_emulator.started && canvas()) { clearInterval(poll); fireStarted(); }
+    W.EJS_onGameStart = fireStarted;
+    clearInterval(poll);
+    poll = setInterval(() => {
+      if (emu() && emu().started && canvas()) { clearInterval(poll); fireStarted(); }
     }, 500);
 
     // Catch the EmulatorJS instance the moment loader.js creates it, before it asks for the ROM.
     let inst;
     let injected = archive;
-    Object.defineProperty(window, 'EJS_emulator', {
+    Object.defineProperty(W, 'EJS_emulator', {
       configurable: true,
       get: () => inst,
       set: (v) => {
@@ -170,13 +203,25 @@
 
     handlers.progress && handlers.progress('Downloading emulator core…');
     await new Promise((res, rej) => {
-      const s = document.createElement('script');
+      const s = W.document.createElement('script');
       s.src = DATA + 'loader.js';
       s.onload = res;
       s.onerror = () => { crumb(null); rej(new Error('EmulatorJS could not be downloaded. Check the connection and try again.')); };
-      document.body.appendChild(s);
+      W.document.body.appendChild(s);
     });
     if (injected || archive) handlers.progress && handlers.progress(null);
+  }
+
+  // Close the current game: flush memory-card saves, then drop the whole frame (frees its memory).
+  async function unload() {
+    clearInterval(poll);
+    try { const g = gm(); if (g && typeof g.saveSaveFiles === 'function') g.saveSaveFiles(); } catch (e) {}
+    await new Promise((r) => setTimeout(r, 800)); // let the save reach storage
+    try { W && W.PS && W.PS.audio.contexts.forEach((c) => c.close().catch(() => {})); } catch (e) {}
+    if (frameEl) frameEl.remove();
+    frameEl = null; W = null;
+    started = false; paused = false; ff = false;
+    prev.forEach((p) => { p.b = 0; p.a = [0, 0, 0, 0]; });
   }
 
   function setInput(port, st) {
@@ -197,18 +242,19 @@
   const releaseAll = (port) => setInput(port, { b: 0, a: [0, 0, 0, 0] });
 
   function canvas() {
-    return (window.EJS_emulator && window.EJS_emulator.canvas) || document.querySelector('#game canvas');
+    return (emu() && emu().canvas) || (W && W.document.querySelector('#game canvas'));
   }
 
   // Video from the emulator canvas + whatever game audio the tap caught.
   async function captureStream() {
     const t0 = Date.now();
-    while (!PS.audio.taps.size && Date.now() - t0 < 2500) await new Promise((r) => setTimeout(r, 150));
+    const taps = () => (W && W.PS ? W.PS.audio.taps : new Map());
+    while (!taps().size && Date.now() - t0 < 2500) await new Promise((r) => setTimeout(r, 150));
     const c = canvas();
     const vs = c.captureStream(60);
     const out = new MediaStream();
     vs.getVideoTracks().forEach((t) => { try { t.contentHint = 'motion'; } catch (e) {} out.addTrack(t); });
-    PS.audio.taps.forEach((tap) => tap.stream.getAudioTracks().forEach((t) => out.addTrack(t)));
+    taps().forEach((tap) => tap.stream.getAudioTracks().forEach((t) => out.addTrack(t)));
     return out;
   }
 
@@ -244,7 +290,7 @@
 
   let paused = false;
   function setPaused(on) {
-    const e = window.EJS_emulator;
+    const e = emu();
     const g = gm();
     if (!e || !g) return paused;
     try {
@@ -331,7 +377,9 @@
   PS.emu = {
     load, setInput, releaseAll, captureStream, canvas, setPerf, measureFps, setUncapped, canUncap,
     saveState, loadState, crumb, setFastForward, setPaused, screenshot, normalizeCheat, applyCheats, cheatsSupported,
-    get paused() { return paused; }, get gameName() { return gameName; }, stateInfo, restart, setMultitap, toggleFastForward,
+    get paused() { return paused; }, get gameName() { return gameName; }, unload,
+    setFilter(f) { look.filter = f; applyLook(); },
+    setEjsUi(on) { look.ejsUi = !!on; applyLook(); }, stateInfo, restart, setMultitap, toggleFastForward,
     get started() { return started; },
     title: '',
   };
