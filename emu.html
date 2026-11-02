@@ -15,9 +15,10 @@
     var save = function () { try { localStorage.setItem(KEY, JSON.stringify(log.slice(-200))); } catch (e) {} };
     var text = function (a) { try { return typeof a === 'string' ? a : (a && a.message) || JSON.stringify(a); } catch (e) { return String(a); } };
     window.__emuLog = function (kind, args) {
+      if (kind !== 'error' && /^Translation not found/.test(String(args && args[0]))) return; // menu noise
       log.push((new Date().toISOString().slice(11, 19) + ' ' + kind + ' ' + [].map.call(args, text).join(' ')).slice(0, 400));
       if (log.length > 300) log.splice(0, 100);
-      if (kind === 'error' || kind === 'warn') save();
+      if (kind === 'error' || kind === 'warn' || kind === 'beat') save(); // saved at once, so it survives a crash
       else if (!timer) timer = setTimeout(function () { timer = null; save(); }, 1500);
     };
     ['log', 'info', 'warn', 'error'].forEach(function (k) {

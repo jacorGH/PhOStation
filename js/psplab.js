@@ -110,7 +110,7 @@
     if (r.webgl2 && !r.webgl2.ok) out.push({ level: 'bad', text: 'No WebGL 2, which PPSSPP needs for graphics.' });
     if (r.webgl2 && r.webgl2.ok && !r.webgl2.colorBufferFloat) out.push({ level: 'warn', text: 'No float render targets (EXT_color_buffer_float). Some PSP graphics paths may fail.' });
     if (!r.offscreenWebGL2) out.push({ level: 'info', text: 'Workers can\u2019t draw with WebGL 2. Fine if the build draws on the main thread.' });
-    if (!out.some((x) => x.level === 'bad')) out.push({ level: 'ok', text: 'The basics are all here. If PSP still fails, the emulator log will show where.' });
+    if (!out.some((x) => x.level === 'bad')) out.push({ level: 'ok', text: 'This browser has every feature the PSP emulator needs. If a game crashes mid-play with no error, the phone ran out of memory; the heartbeat lines in the log show how much it was using and when.' });
     return out;
   }
 

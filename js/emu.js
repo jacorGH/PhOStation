@@ -56,11 +56,13 @@
   const CHUNK = 1024 * 1024;
   const CACHE_CHUNKS = 32;
 
+  const discStats = { readMB: 0, fetchedMB: 0 };
   function chunkReader(blob) {
     const cache = new Map(); // chunk index -> Uint8Array (Map keeps insertion order for LRU)
     function load(i) {
       let c = cache.get(i);
       if (c) { cache.delete(i); cache.set(i, c); return c; }
+      discStats.fetchedMB += CHUNK / 1048576;
       const start = i * CHUNK, end = Math.min(blob.size, start + CHUNK);
       const url = URL.createObjectURL(blob.slice(start, end));
       try {
@@ -80,6 +82,7 @@
     // Copy `length` bytes from `position` into `dest` (a typed array) at `offset`.
     return function read(dest, offset, length, position) {
       const n = Math.max(0, Math.min(length, blob.size - position));
+      discStats.readMB += n / 1048576;
       let done = 0;
       while (done < n) {
         const pos = position + done;
@@ -206,6 +209,38 @@
     return !!(M && typeof (M._emscripten_set_main_loop_timing || M.setMainLoopTiming) === 'function');
   }
 
+  // ---------- heartbeat ----------
+  // Every 10 s while a game runs: uptime, emulator memory, emulator frame rate, disc reading.
+  // Written straight to the saved log, so the last line before a crash survives it.
+  let beatTimer = null;
+  function heapMB() {
+    try {
+      const M = emu() && emu().Module;
+      const buf = (M && ((M.HEAPU8 && M.HEAPU8.buffer) || (M.wasmMemory && M.wasmMemory.buffer) || (M.asm && M.asm.memory && M.asm.memory.buffer))) || null;
+      return buf ? Math.round(buf.byteLength / 1048576) : null;
+    } catch (e) { return null; }
+  }
+  function frameNum() {
+    try { const g = gm(); return g && typeof g.getFrameNum === 'function' ? g.getFrameNum() : null; } catch (e) { return null; }
+  }
+  function startHeartbeat() {
+    clearInterval(beatTimer);
+    const t0 = Date.now();
+    let lastFrame = frameNum(), lastAt = Date.now();
+    discStats.readMB = 0; discStats.fetchedMB = 0;
+    beatTimer = setInterval(() => {
+      if (!W || !W.__emuLog) return;
+      const secs = Math.round((Date.now() - t0) / 1000);
+      const f = frameNum(), now = Date.now();
+      const fps = f != null && lastFrame != null ? Math.round(((f - lastFrame) * 1000) / (now - lastAt)) : null;
+      lastFrame = f; lastAt = now;
+      const heap = heapMB();
+      W.__emuLog('beat', [`[phostation] ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')} running,`
+        + ` memory ${heap != null ? heap + ' MB' : 'n/a'}, ${fps != null ? fps + ' fps' : 'fps n/a'}${paused ? ' (paused)' : ''},`
+        + ` disc read ${Math.round(discStats.readMB)} MB (fetched ${Math.round(discStats.fetchedMB)} MB)`]);
+    }, 10000);
+  }
+
   // Leaving or closing the page normally isn't a crash.
   addEventListener('pagehide', (e) => { if (!e.persisted) crumb(null); });
 
@@ -276,6 +311,7 @@
     W.EJS_gameUrl = URL.createObjectURL(files[0]);
     W.EJS_gameName = archive ? gameName : clean(files[0].name);
     W.EJS_startOnLoaded = true;
+    if (opts.debug) W.EJS_DEBUG_XX = true; // EmulatorJS debug mode: the core's own messages reach the log
     W.EJS_color = '#eaa64a';
     W.EJS_defaultOptions = system === 'psp' ? Object.assign({}, PSP_LIGHT) : Object.assign(perfOpts(opts.perf), multitapOpts(!!opts.multitap));
     if (opts.bios && system === 'psx') W.EJS_biosUrl = await prepareBios(opts.bios);
@@ -284,6 +320,7 @@
       if (started) return;
       started = true;
       crumb('running');
+      startHeartbeat();
       handlers.started && handlers.started();
     };
     W.EJS_onGameStart = fireStarted;
@@ -323,6 +360,7 @@
   // Close the current game: flush memory-card saves, then drop the whole frame (frees its memory).
   async function unload() {
     clearInterval(poll);
+    clearInterval(beatTimer);
     crumb(null);
     try { const g = gm(); if (g && typeof g.saveSaveFiles === 'function') g.saveSaveFiles(); } catch (e) {}
     await new Promise((r) => setTimeout(r, 800)); // let the save reach storage

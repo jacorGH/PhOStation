@@ -468,7 +468,7 @@
     setWaiting('Preparing the disc…');
     try {
       await PS.emu.load({
-        files: S.files, bios: S.bios, multitap: S.multitap, perf: S.perf, system: S.system,
+        files: S.files, bios: S.bios, multitap: S.multitap, perf: S.perf, system: S.system, debug: !!P.emuDebug,
         handlers: { progress: setWaiting, started: onGameStarted },
       });
     } catch (err) {
@@ -563,7 +563,7 @@
       S.net.notify && S.net.notify('The host is changing the game…');
       setWaiting('Loading the new game…');
       await PS.emu.load({
-        files: S.files, bios: S.bios, multitap: S.multitap, perf: S.perf, system: S.system,
+        files: S.files, bios: S.bios, multitap: S.multitap, perf: S.perf, system: S.system, debug: !!P.emuDebug,
         handlers: { progress: setWaiting, started: onGameStarted },
       });
     } catch (err) {
@@ -1240,6 +1240,7 @@
           setTimeout(() => (location.href = location.pathname), 350);
           break;
         case 'pspexp': setPspExperimental(t.checked); break;
+        case 'emudebug': P.emuDebug = t.checked; toast(t.checked ? 'Detailed log on for the next game you start' : 'Detailed log off'); break;
         case 'psplab': runPspLab(); break;
         case 'emulog': {
           const log = PS.emu.log();
@@ -1317,6 +1318,7 @@
       ${PS.system.isWebKitOnly ? `
       <label class="toggle"><input type="checkbox" data-do="pspexp" ${P.pspExperimental ? 'checked' : ''}><span><b>Try PSP on this ${/iPad/.test(navigator.userAgent) ? 'iPad' : 'iPhone'}</b>
         <small>The PSP emulator doesn\u2019t officially support Safari\u2019s engine. This switches on a stricter isolation mode Safari supports and reloads the app. It may work, show a blank screen or close. PS1 games aren\u2019t affected; switch it off if anything else stops loading.</small></span></label>` : ''}
+      <label class="toggle"><input type="checkbox" data-do="emudebug" ${P.emuDebug ? 'checked' : ''}><span><b>Detailed emulator log</b><small>Runs EmulatorJS in debug mode so the PSP emulator\u2019s own messages reach the log. Slower; turn it on only while testing.</small></span></label>
       <p class="note">What PSP needs from this browser:</p>
       <div class="checks">
         ${row(r.isolated, 'Cross-origin isolation', r.isolated ? 'On' : 'Off (switched on by the app after a reload)')}
