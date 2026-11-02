@@ -1307,7 +1307,8 @@
       <label class="toggle"><input type="checkbox" data-do="sharerelay" ${P.shareRelay ? 'checked' : ''}><span><b>Share my relay with friends I invite</b><small>Invites carry short-lived relay logins (valid up to a day), so friends on strict networks can still connect.</small></span></label>
       ${experimentalHtml()}
       <h3>About</h3>
-      <p class="note">PhoStation runs EmulatorJS with the PCSX-ReARMed core. Bring your own game discs and BIOS.</p>`;
+      <p class="note">PhoStation runs EmulatorJS with the PCSX-ReARMed (PS1) and PPSSPP (PSP) cores. Bring your own game discs and BIOS.</p>
+      <p class="note">Build ${PS.build}</p>`;
   }
 
   // ---------- experimental: PSP on iPhone ----------

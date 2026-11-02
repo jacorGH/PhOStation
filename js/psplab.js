@@ -116,7 +116,7 @@
 
   function report(r, log) {
     const lines = [
-      'PhoStation PSP check', `Date: ${new Date().toISOString()}`, `UA: ${navigator.userAgent}`, '',
+      'PhoStation PSP check', `Build: ${PS.build}`, `Date: ${new Date().toISOString()}`, `UA: ${navigator.userAgent}`, '',
       JSON.stringify(Object.assign({}, r, { verdict: undefined }), null, 1), '',
       'Verdict:', ...r.verdict.map((v) => `- [${v.level}] ${v.text}`),
     ];

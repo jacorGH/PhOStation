@@ -351,6 +351,7 @@
       if (started) return;
       started = true;
       crumb('running');
+      try { W.__emuLog('beat', [`[phostation] build ${PS.build}, ${system.toUpperCase()} ${PS.emu.title}, ${PS.system.isWebKitOnly ? 'iPhone/iPad' : 'other'}${opts.debug ? ', detailed log' : ''}`]); } catch (e) {}
       startHeartbeat();
       handlers.started && handlers.started();
     };

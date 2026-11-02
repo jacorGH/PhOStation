@@ -4,6 +4,8 @@
    3) Tiny prefs + IndexedDB helpers shared by the other modules. */
 (function () {
   const PS = (window.PS = window.PS || {});
+  // Bump with every release, so logs and Settings show exactly which version ran.
+  PS.build = '2026.11.02-r5';
 
   // ---------- 1. WebGL capture fix ----------
   const origGetContext = HTMLCanvasElement.prototype.getContext;

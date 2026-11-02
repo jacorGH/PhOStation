@@ -7,7 +7,7 @@
         sites must then be explicitly shareable, so they're re-requested here with CORS and
         marked shareable (CORP: cross-origin).
    The mode is stored in IndexedDB ('phostation' > kv > coiMode) because workers can't read localStorage. */
-const CACHE = 'phostation-v11';
+const CACHE = 'phostation-v12';
 const SHELL = ['./', 'index.html', 'emu.html', 'css/app.css', 'js/boot.js', 'js/ice.js', 'js/mesh.js', 'js/emu.js', 'js/system.js', 'js/psplab.js',
   'js/library.js', 'js/shrink.js', 'js/unpack.js', 'js/spill.js', 'js/disk-worker.js', 'js/pbp-worker.js', 'js/controls.js',
   'js/delta.js', 'js/direct.js', 'js/nettest.js', 'js/net.js', 'js/app.js', 'manifest.webmanifest',
@@ -64,7 +64,9 @@ async function shareable(req) {
 async function sameOrigin(req) {
   const mode = coiMode || (await modeReady);
   try {
-    const res = await fetch(req);
+    // Always check the server for app files (GitHub Pages lets browsers reuse them for 10 minutes),
+    // so a new version shows up on the very next load.
+    const res = await fetch(req, { cache: 'no-cache' });
     if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
     return isolate(res, mode);
   } catch (e) {
