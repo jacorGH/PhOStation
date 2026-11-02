@@ -360,7 +360,9 @@
     system = opts.system === 'psp' ? 'psp' : 'psx';
     W.EJS_core = system;
     if (system === 'psp') W.EJS_threads = true; // PPSSPP only runs threaded
-    W.EJS_pathtodata = DATA;
+    // PSP can use EmulatorJS's nightly build (newest PSP emulator, updated daily); PS1 stays on stable.
+    const data = system === 'psp' && opts.core === 'nightly' ? DATA.replace('/stable/', '/nightly/') : DATA;
+    W.EJS_pathtodata = data;
     // Only fetched by EmulatorJS for .zip/.7z, or if the direct write can't be installed.
     W.EJS_gameUrl = URL.createObjectURL(files[0]);
     W.EJS_gameName = archive ? gameName : clean(files[0].name);
@@ -374,7 +376,7 @@
       if (started) return;
       started = true;
       crumb('running');
-      try { W.__emuLog('beat', [`[phostation] build ${PS.build}, ${system.toUpperCase()} ${PS.emu.title}, ${PS.system.isWebKitOnly ? 'iPhone/iPad' : 'other'}${opts.debug ? ', detailed log' : ''}`]); } catch (e) {}
+      try { W.__emuLog('beat', [`[phostation] build ${PS.build}, ${system.toUpperCase()} ${PS.emu.title}, emulator ${system === 'psp' && opts.core === 'nightly' ? 'nightly' : 'stable'}, ${PS.system.isWebKitOnly ? 'iPhone/iPad' : 'other'}${opts.debug ? ', detailed log' : ''}`]); } catch (e) {}
       startHeartbeat();
       handlers.started && handlers.started();
     };
@@ -404,7 +406,7 @@
     handlers.progress && handlers.progress('Downloading emulator core…');
     await new Promise((res, rej) => {
       const s = W.document.createElement('script');
-      s.src = DATA + 'loader.js';
+      s.src = data + 'loader.js';
       s.onload = res;
       s.onerror = () => { crumb(null); rej(new Error('EmulatorJS could not be downloaded. Check the connection and try again.')); };
       W.document.body.appendChild(s);

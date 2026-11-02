@@ -5,7 +5,7 @@
 (function () {
   const PS = (window.PS = window.PS || {});
   // Bump with every release, so logs and Settings show exactly which version ran.
-  PS.build = '2026.11.02-r7';
+  PS.build = '2026.11.02-r8';
 
   // ---------- 1. WebGL capture fix ----------
   const origGetContext = HTMLCanvasElement.prototype.getContext;
