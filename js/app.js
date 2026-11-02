@@ -103,11 +103,15 @@
     const last = JSON.parse(localStorage.getItem('phostation.loading') || 'null');
     localStorage.removeItem('phostation.loading');
     if (last && Date.now() - last.at < 30 * 60e3) {
-      const where = { core: 'while downloading the emulator', disc: 'while loading the disc', boot: 'while booting the disc' }[last.stage] || 'while loading';
-      const msg = `${last.game || 'The game'} stopped ${where} and the page restarted. `
-        + (last.stage === 'core'
-          ? 'Check the connection and try again.'
-          : 'iPhone does this when a game needs more memory than Safari allows. Close other tabs and try again. A .chd or .pbp copy of the disc uses much less memory than .bin or .iso.');
+      const where = { core: 'while downloading the emulator', disc: 'while loading the disc', stream: 'while opening the disc', boot: 'while starting the game' }[last.stage] || 'while loading';
+      const psp = last.system === 'psp';
+      let advice;
+      if (last.stage === 'core') advice = 'Check the connection and try again.';
+      else if (psp) advice = PS.system.isWebKitOnly
+        ? 'The PSP emulator ran out of the memory Safari allows. Close other apps and Safari tabs and try again. If it keeps happening, this game is too heavy for the experiment on this iPhone; run the PSP check in Settings and send me the report.'
+        : 'The PSP emulator ran out of memory. Close other tabs and apps and try again.';
+      else advice = 'iPhone does this when a game needs more memory than Safari allows. Close other tabs and try again. A .chd or .pbp copy of the disc uses much less memory than .bin or .iso.';
+      const msg = `${last.game || 'The game'} stopped ${where} and the page restarted. ${advice}`;
       $$('[data-crash]').forEach((el) => { el.textContent = msg; el.hidden = false; });
     }
   } catch (e) {}

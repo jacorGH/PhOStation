@@ -25,7 +25,7 @@
   // Breadcrumbs survive a crash-reload so the app can say where loading died.
   function crumb(stage) {
     try {
-      if (stage) localStorage.setItem('phostation.loading', JSON.stringify({ stage, game: PS.emu.title, at: Date.now() }));
+      if (stage) localStorage.setItem('phostation.loading', JSON.stringify({ stage, game: PS.emu.title, system, at: Date.now() }));
       else localStorage.removeItem('phostation.loading');
     } catch (e) {}
   }
@@ -47,16 +47,85 @@
   // Replace EmulatorJS's ROM download with a direct write into its file system.
   // The disc is read once and handed over without copying (canOwn), which keeps
   // memory at about 1x the disc size instead of 3-4x. iOS reloads the tab when it runs out.
+  // ---------- streaming disc ----------
+  // Big discs aren't copied into memory. The emulator gets a "lazy" file: when the game reads part
+  // of it, that 1 MB piece is fetched from storage (synchronously, since the emulator's file reads
+  // are synchronous) and a small cache keeps recent pieces. Memory stays around 32 MB for any disc
+  // size, which is what lets 1-2 GB PSP games load on iPhone.
+  const STREAM_MIN = 64 * 1024 * 1024; // smaller files are simply copied in
+  const CHUNK = 1024 * 1024;
+  const CACHE_CHUNKS = 32;
+
+  function chunkReader(blob) {
+    const cache = new Map(); // chunk index -> Uint8Array (Map keeps insertion order for LRU)
+    function load(i) {
+      let c = cache.get(i);
+      if (c) { cache.delete(i); cache.set(i, c); return c; }
+      const start = i * CHUNK, end = Math.min(blob.size, start + CHUNK);
+      const url = URL.createObjectURL(blob.slice(start, end));
+      try {
+        // Synchronous binary read: the x-user-defined charset hands back raw bytes as characters.
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', url, false);
+        xhr.overrideMimeType('text/plain; charset=x-user-defined');
+        xhr.send(null);
+        const s = xhr.responseText;
+        c = new Uint8Array(s.length);
+        for (let k = 0; k < s.length; k++) c[k] = s.charCodeAt(k) & 0xff;
+      } finally { URL.revokeObjectURL(url); }
+      cache.set(i, c);
+      if (cache.size > CACHE_CHUNKS) cache.delete(cache.keys().next().value);
+      return c;
+    }
+    // Copy `length` bytes from `position` into `dest` (a typed array) at `offset`.
+    return function read(dest, offset, length, position) {
+      const n = Math.max(0, Math.min(length, blob.size - position));
+      let done = 0;
+      while (done < n) {
+        const pos = position + done;
+        const c = load(Math.floor(pos / CHUNK));
+        const from = pos % CHUNK;
+        const take = Math.min(n - done, c.length - from);
+        const src = c.subarray(from, from + take);
+        if (dest instanceof Uint8Array) dest.set(src, offset + done);
+        else new Uint8Array(dest.buffer, dest.byteOffset + offset + done, take).set(src);
+        done += take;
+      }
+      return n;
+    };
+  }
+
+  // A read-only file in the emulator's file system (Emscripten MEMFS) whose bytes come from `blob`.
+  // Same approach as Emscripten's own createLazyFile, which only works inside workers.
+  function mountStreaming(FS, name, blob) {
+    const node = FS.createFile('/', name, {}, true, false);
+    const read = chunkReader(blob);
+    node.contents = { length: blob.size, streaming: true }; // non-empty, so MEMFS treats it as loaded
+    Object.defineProperty(node, 'usedBytes', { configurable: true, get: () => blob.size }); // file size for stat/seek
+    const ops = Object.assign({}, node.stream_ops);
+    ops.read = (stream, buffer, offset, length, position) => read(buffer, offset, length, position);
+    ops.write = () => { throw new FS.ErrnoError(63); }; // read-only
+    node.stream_ops = ops;
+    return node;
+  }
+
   function injectDisc(emu, files, p) {
     if (!emu || typeof emu.downloadRom !== 'function') return false;
     emu.downloadRom = async function () {
       const FS = this.gameManager.FS;
       for (let i = 0; i < files.length; i++) {
         const f = files[i];
-        crumb('disc');
+        crumb(f.size >= STREAM_MIN ? 'stream' : 'disc');
         handlers.progress && handlers.progress(`Loading disc${files.length > 1 ? ` (${i + 1}/${files.length})` : ''}…`);
-        const bytes = new Uint8Array(await f.arrayBuffer());
-        FS.writeFile('/' + f.name, bytes, { canOwn: true });
+        let streamed = false;
+        if (f.size >= STREAM_MIN && typeof FS.createFile === 'function') {
+          try { mountStreaming(FS, f.name, f); streamed = true; }
+          catch (e) { console.warn('[phostation] streaming mount failed, copying instead:', e); }
+        }
+        if (!streamed) {
+          const bytes = new Uint8Array(await f.arrayBuffer());
+          FS.writeFile('/' + f.name, bytes, { canOwn: true });
+        }
       }
       if (p.playlist) FS.writeFile('/' + p.main, p.playlist);
       this.fileName = p.main;
@@ -386,7 +455,7 @@
 
   PS.emu = {
     load, setInput, releaseAll, captureStream, canvas, setPerf, measureFps, setUncapped, canUncap,
-    saveState, loadState, crumb, setFastForward, setPaused, screenshot, normalizeCheat, applyCheats, cheatsSupported,
+    saveState, loadState, crumb, setFastForward, _mountStreaming: mountStreaming, _chunkReader: chunkReader, setPaused, screenshot, normalizeCheat, applyCheats, cheatsSupported,
     // Emulator console messages from the current run (or the previous one, e.g. after a crash).
     log() {
       for (const k of ['phostation.emulog', 'phostation.emulog.prev']) {
