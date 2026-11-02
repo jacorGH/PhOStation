@@ -56,25 +56,35 @@
   const CHUNK = 1024 * 1024;
   const CACHE_CHUNKS = 32;
 
-  const discStats = { readMB: 0, fetchedMB: 0 };
+  const discStats = { readMB: 0, fetchedMB: 0, biggestMB: 0, bigReads: 0 };
+
+  // One synchronous read of [start, end) from the blob, returned as text (1 char per byte).
+  // Safari only allows text for synchronous reads on the page, so keep these small and short-lived.
+  function syncText(blob, start, end) {
+    const url = URL.createObjectURL(blob.slice(start, end));
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', url, false);
+      xhr.overrideMimeType('text/plain; charset=x-user-defined');
+      xhr.send(null);
+      return xhr.responseText;
+    } finally { URL.revokeObjectURL(url); }
+  }
+  // Write text bytes straight into the destination, without an extra copy.
+  function textInto(s, dest, at) {
+    if (dest instanceof Uint8Array) { for (let k = 0; k < s.length; k++) dest[at + k] = s.charCodeAt(k); }
+    else { for (let k = 0; k < s.length; k++) { const v = s.charCodeAt(k) & 0xff; dest[at + k] = v > 127 ? v - 256 : v; } }
+  }
+
   function chunkReader(blob) {
     const cache = new Map(); // chunk index -> Uint8Array (Map keeps insertion order for LRU)
     function load(i) {
       let c = cache.get(i);
       if (c) { cache.delete(i); cache.set(i, c); return c; }
       discStats.fetchedMB += CHUNK / 1048576;
-      const start = i * CHUNK, end = Math.min(blob.size, start + CHUNK);
-      const url = URL.createObjectURL(blob.slice(start, end));
-      try {
-        // Synchronous binary read: the x-user-defined charset hands back raw bytes as characters.
-        const xhr = new XMLHttpRequest();
-        xhr.open('GET', url, false);
-        xhr.overrideMimeType('text/plain; charset=x-user-defined');
-        xhr.send(null);
-        const s = xhr.responseText;
-        c = new Uint8Array(s.length);
-        for (let k = 0; k < s.length; k++) c[k] = s.charCodeAt(k) & 0xff;
-      } finally { URL.revokeObjectURL(url); }
+      const s = syncText(blob, i * CHUNK, Math.min(blob.size, (i + 1) * CHUNK));
+      c = new Uint8Array(s.length);
+      for (let k = 0; k < s.length; k++) c[k] = s.charCodeAt(k) & 0xff;
       cache.set(i, c);
       if (cache.size > CACHE_CHUNKS) cache.delete(cache.keys().next().value);
       return c;
@@ -82,7 +92,22 @@
     // Copy `length` bytes from `position` into `dest` (a typed array) at `offset`.
     return function read(dest, offset, length, position) {
       const n = Math.max(0, Math.min(length, blob.size - position));
-      discStats.readMB += n / 1048576;
+      const mb = n / 1048576;
+      discStats.readMB += mb;
+      if (mb > discStats.biggestMB) discStats.biggestMB = mb;
+      // Big reads (scene and movie loading) go straight from storage into the emulator in 256 KB
+      // slices: no cache churn and only a little temporary text alive at any moment.
+      if (n >= 2 * CHUNK) {
+        discStats.bigReads++;
+        const SLICE = 256 * 1024;
+        for (let done = 0; done < n; done += SLICE) {
+          const take = Math.min(SLICE, n - done);
+          const s = syncText(blob, position + done, position + done + take);
+          discStats.fetchedMB += take / 1048576;
+          textInto(s, dest, offset + done);
+        }
+        return n;
+      }
       let done = 0;
       while (done < n) {
         const pos = position + done;
@@ -227,7 +252,7 @@
     clearInterval(beatTimer);
     const t0 = Date.now();
     let lastFrame = frameNum(), lastAt = Date.now();
-    discStats.readMB = 0; discStats.fetchedMB = 0;
+    Object.assign(discStats, { readMB: 0, fetchedMB: 0, biggestMB: 0, bigReads: 0 });
     beatTimer = setInterval(() => {
       if (!W || !W.__emuLog) return;
       const secs = Math.round((Date.now() - t0) / 1000);
@@ -237,9 +262,15 @@
       const heap = heapMB();
       W.__emuLog('beat', [`[phostation] ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')} running,`
         + ` memory ${heap != null ? heap + ' MB' : 'n/a'}, ${fps != null ? fps + ' fps' : 'fps n/a'}${paused ? ' (paused)' : ''},`
-        + ` disc read ${Math.round(discStats.readMB)} MB (fetched ${Math.round(discStats.fetchedMB)} MB)`]);
-    }, 10000);
+        + ` disc read ${Math.round(discStats.readMB)} MB (fetched ${Math.round(discStats.fetchedMB)} MB),`
+        + ` biggest read ${discStats.biggestMB.toFixed(1)} MB, big reads ${discStats.bigReads}`]);
+      discStats.biggestMB = 0; // per interval, so a spike right before a crash stands out
+    }, 5000);
   }
+
+  document.addEventListener('visibilitychange', () => {
+    try { if (started && W && W.__emuLog) W.__emuLog('beat', [`[phostation] app ${document.visibilityState}`]); } catch (e) {}
+  });
 
   // Leaving or closing the page normally isn't a crash.
   addEventListener('pagehide', (e) => { if (!e.persisted) crumb(null); });
