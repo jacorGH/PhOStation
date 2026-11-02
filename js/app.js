@@ -103,10 +103,13 @@
     const last = JSON.parse(localStorage.getItem('phostation.loading') || 'null');
     localStorage.removeItem('phostation.loading');
     if (last && Date.now() - last.at < 30 * 60e3) {
-      const where = { core: 'while downloading the emulator', disc: 'while loading the disc', stream: 'while opening the disc', boot: 'while starting the game' }[last.stage] || 'while loading';
+      const where = { core: 'while downloading the emulator', disc: 'while loading the disc', stream: 'while opening the disc', boot: 'while starting the game', running: 'while playing' }[last.stage] || 'while loading';
       const psp = last.system === 'psp';
       let advice;
       if (last.stage === 'core') advice = 'Check the connection and try again.';
+      else if (psp && last.stage === 'running') advice = PS.system.isWebKitOnly
+        ? 'That\u2019s almost always iPhone\u2019s memory limit. Settings, Experimental, Run full PSP check, then Copy report: it includes the emulator\u2019s log from that session, so we can see what it was doing.'
+        : 'It probably ran out of memory. Close other tabs and apps and try again.';
       else if (psp) advice = PS.system.isWebKitOnly
         ? 'The PSP emulator ran out of the memory Safari allows. Close other apps and Safari tabs and try again. If it keeps happening, this game is too heavy for the experiment on this iPhone; run the PSP check in Settings and send me the report.'
         : 'The PSP emulator ran out of memory. Close other tabs and apps and try again.';
@@ -503,6 +506,7 @@
     // iPhone Low Power Mode limits the screen to 30 fps, and the emulator runs once per screen
     // refresh, so games play at half speed. Switch the emulator to its own 60 fps timer.
     setTimeout(async () => {
+      if (PS.emu.system === 'psp') return; // PSP is heavy enough; don't push it to a faster timer
       const fps = await PS.emu.measureFps(2000);
       if (fps >= 45) return;
       S.uncapped = PS.emu.setUncapped(true);

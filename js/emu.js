@@ -158,6 +158,19 @@
     fast:     { frameskip_type: 'auto', frameskip: '1', frameskip_interval: '1', psxclock: '50', spu_interpolation: 'off', spu_reverb: 'disabled', dithering: 'disabled' },
     turbo:    { frameskip_type: 'fixed_interval', frameskip: '1', frameskip_interval: '1', psxclock: '45', spu_interpolation: 'off', spu_reverb: 'disabled', dithering: 'disabled' },
   };
+  // PSP (PPSSPP) settings that keep memory and work down on phones: native resolution, no texture
+  // upscaling or replacement, textures cached lazily. Unknown option names are ignored by the core.
+  const PSP_LIGHT = {
+    ppsspp_internal_resolution: '480x272',
+    ppsspp_texture_scaling_level: 'disabled',
+    ppsspp_texture_scaling_type: 'xbrz',
+    ppsspp_texture_deposterize: 'disabled',
+    ppsspp_texture_replacement: 'disabled',
+    ppsspp_lazy_texture_caching: 'enabled',
+    ppsspp_texture_filtering: 'auto',
+    ppsspp_fast_memory: 'enabled',
+    ppsspp_spline_quality: 'low',
+  };
   const perfOpts = (name) => {
     const o = {};
     const p = PERF[name] || PERF.balanced;
@@ -193,6 +206,9 @@
     return !!(M && typeof (M._emscripten_set_main_loop_timing || M.setMainLoopTiming) === 'function');
   }
 
+  // Leaving or closing the page normally isn't a crash.
+  addEventListener('pagehide', (e) => { if (!e.persisted) crumb(null); });
+
   function makeFrame() {
     return new Promise((res, rej) => {
       const holder = document.getElementById('game');
@@ -215,7 +231,27 @@
   // Touches land on the main page, so wake the frame's audio from here.
   ['pointerdown', 'touchend', 'keydown'].forEach((ev) => addEventListener(ev, () => {
     try { W && W.PS && W.PS.audio.contexts.forEach((c) => c.state === 'suspended' && c.resume().catch(() => {})); } catch (e) {}
+    if (ev !== 'keydown') dismissResume();
   }, { capture: true, passive: true }));
+  // EmulatorJS shows "Click to resume Emulator" when Safari blocks sound until a tap inside the
+  // emulator. Taps land on our controller instead, so pass this one through (during a real touch,
+  // so Safari counts it as the user's tap).
+  function dismissResume() {
+    try {
+      if (!W || !W.document) return;
+      const walker = W.document.createTreeWalker(W.document.body, NodeFilter.SHOW_TEXT);
+      let n;
+      while ((n = walker.nextNode())) {
+        if (/click to resume/i.test(n.nodeValue) && n.parentElement && n.parentElement.offsetParent !== null) {
+          const el = n.parentElement;
+          ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'touchstart', 'touchend'].forEach((t) => {
+            try { el.dispatchEvent(new W.Event(t, { bubbles: true, cancelable: true })); } catch (e) {}
+          });
+          return;
+        }
+      }
+    } catch (e) {}
+  }
 
   async function load(opts) {
     handlers = opts.handlers || {};
@@ -241,13 +277,13 @@
     W.EJS_gameName = archive ? gameName : clean(files[0].name);
     W.EJS_startOnLoaded = true;
     W.EJS_color = '#eaa64a';
-    W.EJS_defaultOptions = system === 'psp' ? {} : Object.assign(perfOpts(opts.perf), multitapOpts(!!opts.multitap));
+    W.EJS_defaultOptions = system === 'psp' ? Object.assign({}, PSP_LIGHT) : Object.assign(perfOpts(opts.perf), multitapOpts(!!opts.multitap));
     if (opts.bios && system === 'psx') W.EJS_biosUrl = await prepareBios(opts.bios);
 
     const fireStarted = () => {
       if (started) return;
       started = true;
-      crumb(null);
+      crumb('running');
       handlers.started && handlers.started();
     };
     W.EJS_onGameStart = fireStarted;
@@ -287,6 +323,7 @@
   // Close the current game: flush memory-card saves, then drop the whole frame (frees its memory).
   async function unload() {
     clearInterval(poll);
+    crumb(null);
     try { const g = gm(); if (g && typeof g.saveSaveFiles === 'function') g.saveSaveFiles(); } catch (e) {}
     await new Promise((r) => setTimeout(r, 800)); // let the save reach storage
     try { W && W.PS && W.PS.audio.contexts.forEach((c) => c.close().catch(() => {})); } catch (e) {}

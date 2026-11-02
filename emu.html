@@ -32,7 +32,15 @@
       try { parent.PS && parent.PS.emuError && parent.PS.emuError(String(msg)); } catch (e) {}
     };
     addEventListener('error', function (e) { report(e.message || (e.target && e.target.src ? 'Couldn\u2019t load ' + e.target.src : 'Unknown error')); }, true);
-    addEventListener('unhandledrejection', function (e) { report((e.reason && (e.reason.message || e.reason)) || 'Unknown error'); });
+    addEventListener('unhandledrejection', function (e) {
+      var r = e.reason || {};
+      // Safari refusing sound/fullscreen/wake-lock without a tap: harmless, keep it in the log only.
+      if (r.name === 'NotAllowedError' || r.name === 'AbortError' || /permission|not allowed/i.test(r.message || '')) {
+        try { window.__emuLog('warn', ['(blocked by browser) ' + (r.message || r.name)]); } catch (x) {}
+        return;
+      }
+      report((r.message || e.reason) || 'Unknown error');
+    });
   })();
 </script>
 <style>
