@@ -248,8 +248,22 @@
   function frameNum() {
     try { const g = gm(); return g && typeof g.getFrameNum === 'function' ? g.getFrameNum() : null; } catch (e) { return null; }
   }
+  // Watchdog thread: tells a frozen page apart from one killed for memory (see watchdog-worker.js).
+  let dog = null, dogTimer = null;
+  function startWatchdog() {
+    try {
+      if (!dog) dog = new Worker('js/watchdog-worker.js');
+      dog.postMessage({ start: true, game: PS.emu.title });
+      clearInterval(dogTimer);
+      dogTimer = setInterval(() => dog.postMessage({ ping: 1 }), 500);
+    } catch (e) {}
+  }
+  function stopWatchdog() { clearInterval(dogTimer); try { dog && dog.postMessage({ stop: true }); } catch (e) {} }
+  document.addEventListener('visibilitychange', () => { try { dog && dog.postMessage({ hidden: document.visibilityState === 'hidden' }); } catch (e) {} });
+
   function startHeartbeat() {
     clearInterval(beatTimer);
+    startWatchdog();
     const t0 = Date.now();
     let lastFrame = frameNum(), lastAt = Date.now();
     Object.assign(discStats, { readMB: 0, fetchedMB: 0, biggestMB: 0, bigReads: 0 });
@@ -273,7 +287,7 @@
   });
 
   // Leaving or closing the page normally isn't a crash.
-  addEventListener('pagehide', (e) => { if (!e.persisted) crumb(null); });
+  addEventListener('pagehide', (e) => { if (!e.persisted) { crumb(null); stopWatchdog(); } });
 
   function makeFrame() {
     return new Promise((res, rej) => {
@@ -393,6 +407,7 @@
   async function unload() {
     clearInterval(poll);
     clearInterval(beatTimer);
+    stopWatchdog();
     crumb(null);
     try { const g = gm(); if (g && typeof g.saveSaveFiles === 'function') g.saveSaveFiles(); } catch (e) {}
     await new Promise((r) => setTimeout(r, 800)); // let the save reach storage

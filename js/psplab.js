@@ -96,6 +96,8 @@
       wasmSimd: wasmSimd(),
       experimentOn: !!PS.prefs.pspExperimental,
     };
+    const w = await PS.system.lastWatchdog();
+    r.lastSession = w ? { frozenBeforeEnd: w.frozen, note: w.text, watchdog: w.raw } : null;
     r.verdict = verdict(r);
     return r;
   }
@@ -119,6 +121,7 @@
       'PhoStation PSP check', `Build: ${PS.build}`, `Date: ${new Date().toISOString()}`, `UA: ${navigator.userAgent}`, '',
       JSON.stringify(Object.assign({}, r, { verdict: undefined }), null, 1), '',
       'Verdict:', ...r.verdict.map((v) => `- [${v.level}] ${v.text}`),
+      ...(r.lastSession ? ['', 'Last session: ' + r.lastSession.note] : []),
     ];
     if (log && log.length) lines.push('', 'Last emulator log:', ...log.slice(-120));
     return lines.join('\n');

@@ -76,5 +76,14 @@
     return { ok: true, experimental: isWebKitOnly };
   }
 
-  PS.system = { detect, detectFile, pspSupport, readiness, isWebKitOnly };
+  // Reads the watchdog's note from the last session: did the page freeze before it died?
+  async function lastWatchdog() {
+    const w = await PS.store.get('watchdog').catch(() => null);
+    if (!w || !w.lastSeen) return null;
+    const secs = (ms) => Math.round(ms / 1000);
+    if (w.frozen) return { frozen: true, text: `The page froze for about ${secs(w.frozenFor)} s before it died: the emulator stopped responding (a hang, not memory).`, raw: w };
+    return { frozen: false, text: 'The page was still responding right up to the end, so it was killed instantly. That\u2019s iOS ending it for memory.', raw: w };
+  }
+
+  PS.system = { detect, detectFile, pspSupport, readiness, isWebKitOnly, lastWatchdog };
 })();

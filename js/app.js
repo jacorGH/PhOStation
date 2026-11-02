@@ -116,6 +116,14 @@
       else advice = 'iPhone does this when a game needs more memory than Safari allows. Close other tabs and try again. A .chd or .pbp copy of the disc uses much less memory than .bin or .iso.';
       const msg = `${last.game || 'The game'} stopped ${where} and the page restarted. ${advice}`;
       $$('[data-crash]').forEach((el) => { el.textContent = msg; el.hidden = false; });
+      if (last.stage === 'running') {
+        // The watchdog knows whether the page froze or was killed; its finding replaces the guess.
+        PS.system.lastWatchdog().then((w) => {
+          if (!w) return;
+          const next = psp ? ' Run the PSP check (Settings, Experimental) and send me the report.' : '';
+          $$('[data-crash]').forEach((el) => { el.textContent = `${last.game || 'The game'} stopped while playing and the page restarted. ${w.text}${next}`; });
+        });
+      }
     }
   } catch (e) {}
 

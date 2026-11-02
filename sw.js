@@ -7,9 +7,9 @@
         sites must then be explicitly shareable, so they're re-requested here with CORS and
         marked shareable (CORP: cross-origin).
    The mode is stored in IndexedDB ('phostation' > kv > coiMode) because workers can't read localStorage. */
-const CACHE = 'phostation-v12';
+const CACHE = 'phostation-v13';
 const SHELL = ['./', 'index.html', 'emu.html', 'css/app.css', 'js/boot.js', 'js/ice.js', 'js/mesh.js', 'js/emu.js', 'js/system.js', 'js/psplab.js',
-  'js/library.js', 'js/shrink.js', 'js/unpack.js', 'js/spill.js', 'js/disk-worker.js', 'js/pbp-worker.js', 'js/controls.js',
+  'js/library.js', 'js/shrink.js', 'js/unpack.js', 'js/spill.js', 'js/disk-worker.js', 'js/pbp-worker.js', 'js/watchdog-worker.js', 'js/controls.js',
   'js/delta.js', 'js/direct.js', 'js/nettest.js', 'js/net.js', 'js/app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
