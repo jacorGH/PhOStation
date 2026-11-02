@@ -387,6 +387,13 @@
   PS.emu = {
     load, setInput, releaseAll, captureStream, canvas, setPerf, measureFps, setUncapped, canUncap,
     saveState, loadState, crumb, setFastForward, setPaused, screenshot, normalizeCheat, applyCheats, cheatsSupported,
+    // Emulator console messages from the current run (or the previous one, e.g. after a crash).
+    log() {
+      for (const k of ['phostation.emulog', 'phostation.emulog.prev']) {
+        try { const l = JSON.parse(localStorage.getItem(k) || '[]'); if (l.length) return l; } catch (e) {}
+      }
+      return [];
+    },
     get paused() { return paused; }, get gameName() { return gameName; }, get system() { return system; }, unload,
     setFilter(f) { look.filter = f; applyLook(); },
     setEjsUi(on) { look.ejsUi = !!on; applyLook(); }, stateInfo, restart, setMultitap, toggleFastForward,

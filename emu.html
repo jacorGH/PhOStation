@@ -7,9 +7,30 @@
 <!-- Runs inside the main page. Swapping games replaces this whole frame, so the room stays connected. -->
 <script src="js/boot.js"></script>
 <script>
+  // Emulator log: keep the emulator's own console messages (saved as they come in, so they
+  // survive a crash) for the PSP check report. The previous run's log is kept as .prev.
+  (function () {
+    var KEY = 'phostation.emulog', log = [], timer = null;
+    try { localStorage.setItem(KEY + '.prev', localStorage.getItem(KEY) || '[]'); localStorage.setItem(KEY, '[]'); } catch (e) {}
+    var save = function () { try { localStorage.setItem(KEY, JSON.stringify(log.slice(-200))); } catch (e) {} };
+    var text = function (a) { try { return typeof a === 'string' ? a : (a && a.message) || JSON.stringify(a); } catch (e) { return String(a); } };
+    window.__emuLog = function (kind, args) {
+      log.push((new Date().toISOString().slice(11, 19) + ' ' + kind + ' ' + [].map.call(args, text).join(' ')).slice(0, 400));
+      if (log.length > 300) log.splice(0, 100);
+      if (kind === 'error' || kind === 'warn') save();
+      else if (!timer) timer = setTimeout(function () { timer = null; save(); }, 1500);
+    };
+    ['log', 'info', 'warn', 'error'].forEach(function (k) {
+      var orig = console[k];
+      console[k] = function () { window.__emuLog(k, arguments); return orig.apply(console, arguments); };
+    });
+  })();
   // Pass emulator errors up to the main page, so they can be shown instead of a silent blank screen.
   (function () {
-    var report = function (msg) { try { parent.PS && parent.PS.emuError && parent.PS.emuError(String(msg)); } catch (e) {} };
+    var report = function (msg) {
+      try { window.__emuLog('error', [msg]); } catch (e) {}
+      try { parent.PS && parent.PS.emuError && parent.PS.emuError(String(msg)); } catch (e) {}
+    };
     addEventListener('error', function (e) { report(e.message || (e.target && e.target.src ? 'Couldn\u2019t load ' + e.target.src : 'Unknown error')); }, true);
     addEventListener('unhandledrejection', function (e) { report((e.reason && (e.reason.message || e.reason)) || 'Unknown error'); });
   })();

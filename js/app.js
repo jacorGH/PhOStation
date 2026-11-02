@@ -1232,6 +1232,13 @@
           setTimeout(() => (location.href = location.pathname), 350);
           break;
         case 'pspexp': setPspExperimental(t.checked); break;
+        case 'psplab': runPspLab(); break;
+        case 'emulog': {
+          const log = PS.emu.log();
+          if (!log.length) { toast('No emulator log yet. Start a game first.'); break; }
+          await copyText(log.join('\n'), 'Emulator log');
+          break;
+        }
         case 'relaymode': P.relayMode = t.dataset.v; renderSettings(); break;
         case 'sharerelay': P.shareRelay = t.checked; break;
         case 'relayguide': relayGuide(); break;
@@ -1307,7 +1314,8 @@
         ${row(r.isolated, 'Cross-origin isolation', r.isolated ? 'On' : 'Off (switched on by the app after a reload)')}
         ${row(r.sab, 'Shared memory for threads', r.sab ? 'Available' : 'Not available')}
         ${row(r.webgl2, 'WebGL 2 graphics', r.webgl2 ? 'Available' : 'Not available')}
-      </div>`;
+      </div>
+      <div class="row2"><button class="ghost" data-do="psplab">Run full PSP check</button><button class="ghost" data-do="emulog">Copy emulator log</button></div>`;
   }
   async function setPspExperimental(on) {
     P.pspExperimental = on;
@@ -1317,6 +1325,33 @@
     sessionStorage.removeItem('phostation.coi');
     toast(on ? 'Experimental PSP mode on. Reloading…' : 'Experimental PSP mode off. Reloading…', 2500);
     setTimeout(() => location.reload(), 900);
+  }
+
+  // Full PSP check: what this browser gives the PSP emulator, plus the last emulator log, as a copyable report.
+  async function runPspLab() {
+    openModal(`<h2>PSP check</h2><p class="dstatus" id="labStatus">Testing this browser… (a few seconds)</p>`);
+    let r;
+    try { r = await PS.psplab.run(); }
+    catch (e) { $('#labStatus').textContent = 'The check stopped: ' + e.message; return; }
+    const text = PS.psplab.report(r, PS.emu.log());
+    const yes = (b) => (b ? 'ok' : 'bad');
+    const gl = r.webgl2 || {};
+    const rows = [
+      [yes(r.isolated), 'Cross-origin isolation', r.isolated ? 'On' : 'Off'],
+      [yes(r.sharedArrayBuffer), 'Shared memory', r.sharedArrayBuffer ? 'Available' : 'Missing'],
+      [r.sharedMemoryMaxMB >= 2048 ? 'ok' : r.sharedMemoryMaxMB ? 'warn' : 'bad', 'Largest shared memory', r.sharedMemoryMaxMB ? `${r.sharedMemoryMaxMB} MB` : (r.sharedMemoryNote || 'None')],
+      [yes(r.threads), 'Threads talking to each other', r.threads ? 'Works' : (r.threadsNote || 'Fails')],
+      [yes(gl.ok), 'WebGL 2', gl.ok ? `${gl.renderer || ''}`.slice(0, 60) : 'Missing'],
+      [gl.colorBufferFloat ? 'ok' : 'warn', 'Float render targets', gl.colorBufferFloat ? 'Yes' : 'No'],
+      [r.offscreenWebGL2 ? 'ok' : 'warn', 'Drawing from worker threads', r.offscreenWebGL2 ? 'Yes' : 'No'],
+      [r.wasmSimd ? 'ok' : 'warn', 'WebAssembly SIMD', r.wasmSimd ? 'Yes' : 'No'],
+    ];
+    $('#modalBody').innerHTML = `<h2>PSP check</h2>
+      <div class="checks">${rows.map(([st, t, d]) => `<div class="check" data-s="${st}"><span class="ic"></span><span>${esc(t)}<small>${esc(String(d))}</small></span></div>`).join('')}</div>
+      ${r.verdict.map((v) => `<div class="verdict ${v.level === 'ok' ? 'ok' : v.level === 'bad' ? 'bad' : 'warn'}" style="margin-bottom:8px"><p style="margin:0">${esc(v.text)}</p></div>`).join('')}
+      <p class="note">Copy the report and paste it into our chat. If you tried a PSP game, it includes the emulator\u2019s own log too.</p>
+      <button class="big primary tight" id="labCopy"><b>Copy report</b></button>`;
+    $('#labCopy').onclick = () => copyText(text, 'Report');
   }
 
   // Errors from inside the emulator frame, shown instead of a silent blank screen.

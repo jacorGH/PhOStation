@@ -28,6 +28,7 @@ PSP games (.iso, .cso, .pbp, .chd) are recognised automatically and get a PSP co
 
 - **Host from Android or a computer** (Chrome or Edge). EmulatorJS doesn't officially support its PSP emulator on Safari's engine, which every iPhone and iPad browser uses. iPhones can always join a PSP room, because guests only receive the video.
 - **Experimental: PSP on iPhone.** Settings > Experimental > *Try PSP on this iPhone*. This switches the service worker to the stricter isolation mode Safari supports (COEP `require-corp`) and re-requests files from other sites with CORS so they're still allowed. The section also shows a readiness check (isolation, shared memory, WebGL 2), and errors from inside the emulator are shown on screen. It may work, show a blank screen or close; switch it off to return to normal.
+- **PSP check** (Settings > Experimental > Run full PSP check) tests exactly what the PSP emulator needs from the browser: isolation, shared memory and how much can be reserved, threads, WebGL 2 and float render targets, drawing from worker threads, and WebAssembly SIMD. *Copy report* includes the emulator's own log from the last PSP attempt (kept even if the page crashed), so problems can be pinned down.
 - The PSP emulator needs threads, which need a cross-origin-isolated page. GitHub Pages can't send those headers, so the service worker adds them; the app reloads itself once on first open to switch it on. It won't work from a code editor's preview.
 - A PSP has one controller: whoever holds P1 plays. Pass it in the menu under Players.
 - PSP is demanding; recent phones and computers work best. .cso files are smaller than .iso.
@@ -92,6 +93,7 @@ js/disk-worker.js   writes unpacked files to storage
 js/spill.js         streams big files to storage (private files or IndexedDB)
 js/pbp-worker.js    .pbp encoder (runs in a background worker)
 js/system.js        PS1 vs PSP detection, PSP support check
+js/psplab.js        PSP check (browser feature probes and report)
 js/emu.js           EmulatorJS wrapper, input injection, save states, split-view math
 js/controls.js      touch pad, Delta skin layout, gamepad, keyboard, haptics
 js/delta.js         .deltaskin importer
