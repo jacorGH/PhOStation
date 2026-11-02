@@ -265,7 +265,7 @@
     clearInterval(beatTimer);
     startWatchdog();
     const t0 = Date.now();
-    let lastFrame = frameNum(), lastAt = Date.now();
+    let lastFrame = frameNum(), lastAt = Date.now(), lastUp = 0;
     Object.assign(discStats, { readMB: 0, fetchedMB: 0, biggestMB: 0, bigReads: 0 });
     beatTimer = setInterval(() => {
       if (!W || !W.__emuLog) return;
@@ -274,8 +274,17 @@
       const fps = f != null && lastFrame != null ? Math.round(((f - lastFrame) * 1000) / (now - lastAt)) : null;
       lastFrame = f; lastAt = now;
       const heap = heapMB();
+      let gpu = '';
+      try {
+        const g = W.PS && W.PS.gpu;
+        if (g) {
+          gpu = ` graphics ${Math.round(g.bytes / 1048576)} MB in ${g.textures} textures/${g.buffers} buffers/${g.renderbuffers} renderbuffers,`
+            + ` uploads ${Math.round((g.uploaded - (lastUp || 0)) / 1048576 / 5)} MB/s,`;
+          lastUp = g.uploaded;
+        }
+      } catch (e) {}
       W.__emuLog('beat', [`[phostation] ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')} running,`
-        + ` memory ${heap != null ? heap + ' MB' : 'n/a'}, ${fps != null ? fps + ' fps' : 'fps n/a'}${paused ? ' (paused)' : ''},`
+        + ` memory ${heap != null ? heap + ' MB' : 'n/a'},${gpu} ${fps != null ? fps + ' fps' : 'fps n/a'}${paused ? ' (paused)' : ''},`
         + ` disc read ${Math.round(discStats.readMB)} MB (fetched ${Math.round(discStats.fetchedMB)} MB),`
         + ` biggest read ${discStats.biggestMB.toFixed(1)} MB, big reads ${discStats.bigReads}`]);
       discStats.biggestMB = 0; // per interval, so a spike right before a crash stands out

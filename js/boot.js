@@ -5,7 +5,7 @@
 (function () {
   const PS = (window.PS = window.PS || {});
   // Bump with every release, so logs and Settings show exactly which version ran.
-  PS.build = '2026.11.02-r6';
+  PS.build = '2026.11.02-r7';
 
   // ---------- 1. WebGL capture fix ----------
   const origGetContext = HTMLCanvasElement.prototype.getContext;
@@ -24,6 +24,62 @@
     PS.realDpr = realDpr;
     Object.defineProperty(window, 'devicePixelRatio', { configurable: true, get: () => 1 });
   } catch (e) {}
+
+  // ---------- 1c. Graphics memory accounting (for the heartbeat) ----------
+  // Counts live WebGL textures/buffers/renderbuffers and roughly how many bytes they hold, plus
+  // upload traffic. Helps spot graphics memory piling up (e.g. during video), which the emulator's
+  // own memory figure doesn't include.
+  PS.gpu = { textures: 0, buffers: 0, renderbuffers: 0, bytes: 0, uploaded: 0 };
+  try {
+    const G = PS.gpu;
+    const sizes = new WeakMap();                  // object -> bytes
+    const bpp = (fmt) => (fmt === 0x8814 || fmt === 0x8C3A ? 16 : fmt === 0x881A ? 8 : 4); // RGBA32F, R11G11B10F, RGBA16F
+    const patch = (proto) => {
+      if (!proto || proto.__psGpu) return;
+      proto.__psGpu = true;
+      const units = new Map();                    // context -> { unit, tex: {unit:target:tex}, rb, buf }
+      const st = (gl) => { let s = units.get(gl); if (!s) units.set(gl, (s = { unit: 0, tex: {}, rb: null, buf: {} })); return s; };
+      const setSize = (obj, bytes) => { if (!obj) return; G.bytes += bytes - (sizes.get(obj) || 0); sizes.set(obj, bytes); };
+      const wrap = (name, fn) => { const o = proto[name]; if (o) proto[name] = function (...a) { return fn.call(this, o, a); }; };
+      wrap('createTexture', function (o, a) { G.textures++; return o.apply(this, a); });
+      wrap('deleteTexture', function (o, a) { if (a[0]) { G.textures--; setSize(a[0], 0); } return o.apply(this, a); });
+      wrap('createBuffer', function (o, a) { G.buffers++; return o.apply(this, a); });
+      wrap('deleteBuffer', function (o, a) { if (a[0]) { G.buffers--; setSize(a[0], 0); } return o.apply(this, a); });
+      wrap('createRenderbuffer', function (o, a) { G.renderbuffers++; return o.apply(this, a); });
+      wrap('deleteRenderbuffer', function (o, a) { if (a[0]) { G.renderbuffers--; setSize(a[0], 0); } return o.apply(this, a); });
+      wrap('activeTexture', function (o, a) { st(this).unit = a[0]; return o.apply(this, a); });
+      wrap('bindTexture', function (o, a) { st(this).tex[st(this).unit + ':' + a[0]] = a[1]; return o.apply(this, a); });
+      wrap('bindRenderbuffer', function (o, a) { st(this).rb = a[1]; return o.apply(this, a); });
+      wrap('bindBuffer', function (o, a) { st(this).buf[a[0]] = a[1]; return o.apply(this, a); });
+      const bound = (gl, target) => st(gl).tex[st(gl).unit + ':' + (target >= 0x8515 && target <= 0x851A ? 0x8513 : target)];
+      wrap('texStorage2D', function (o, a) { const [t, levels, fmt, w, h] = a; setSize(bound(this, t), w * h * bpp(fmt) * (levels > 1 ? 1.34 : 1)); return o.apply(this, a); });
+      wrap('texImage2D', function (o, a) {
+        if (a[1] === 0) { // level 0 decides the size
+          const w = a.length >= 8 ? a[3] : (a[5] && (a[5].videoWidth || a[5].width)) || 0;
+          const h = a.length >= 8 ? a[4] : (a[5] && (a[5].videoHeight || a[5].height)) || 0;
+          setSize(bound(this, a[0]), w * h * bpp(a[2]));
+          G.uploaded += w * h * 4;
+        }
+        return o.apply(this, a);
+      });
+      wrap('texSubImage2D', function (o, a) {
+        const w = a.length >= 9 ? a[4] : (a[6] && (a[6].videoWidth || a[6].width)) || 0;
+        const h = a.length >= 9 ? a[5] : (a[6] && (a[6].videoHeight || a[6].height)) || 0;
+        G.uploaded += w * h * 4;
+        return o.apply(this, a);
+      });
+      wrap('renderbufferStorage', function (o, a) { setSize(st(this).rb, a[2] * a[3] * 4); return o.apply(this, a); });
+      wrap('renderbufferStorageMultisample', function (o, a) { setSize(st(this).rb, a[3] * a[4] * 4 * Math.max(1, a[1])); return o.apply(this, a); });
+      wrap('bufferData', function (o, a) {
+        const n = typeof a[1] === 'number' ? a[1] : (a[1] && a[1].byteLength) || 0;
+        setSize(st(this).buf[a[0]], n);
+        G.uploaded += n;
+        return o.apply(this, a);
+      });
+    };
+    if (typeof WebGL2RenderingContext !== 'undefined') patch(WebGL2RenderingContext.prototype);
+    if (typeof WebGLRenderingContext !== 'undefined') patch(WebGLRenderingContext.prototype);
+  } catch (e) { /* accounting is best-effort; never break rendering */ }
 
   // ---------- 2. Game-audio tap ----------
   PS.audio = { contexts: new Set(), taps: new Map() };
