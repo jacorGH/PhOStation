@@ -3,7 +3,7 @@
 (function () {
   const PS = window.PS;
   const BASE = 'https://cdn.emulatorjs.org/stable/data/compression/';
-  const KEEP = /\.(bin|cue|iso|img|chd|pbp|m3u|sbi|ccd|sub|mdf|mds|toc)$/i;
+  const KEEP = /\.(bin|cue|iso|img|chd|pbp|m3u|sbi|ccd|sub|mdf|mds|toc|cso|elf|prx)$/i;
 
   async function kind(file) {
     const h = new Uint8Array(await file.slice(0, 8).arrayBuffer());
@@ -186,7 +186,7 @@
     const disk = diskClient();
     try {
       const files = k === 'zip' ? await unzip(file, dir, disk, onProgress) : await viaWorker(file, k, dir, disk, onProgress);
-      if (!files.some((f) => /\.(bin|iso|img|chd|pbp|mdf)$/i.test(f.name))) throw new Error('No PS1 disc image was found in this archive.');
+      if (!files.some((f) => /\.(bin|iso|img|chd|pbp|mdf|cso|elf)$/i.test(f.name))) throw new Error('No PS1 or PSP game was found in this archive.');
       return files;
     } finally {
       disk.end();

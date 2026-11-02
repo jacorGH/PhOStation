@@ -10,6 +10,9 @@
   let touch = ZERO(), pad = ZERO(), kb = 0, out = ZERO();
   // Turbo: held turbo buttons flick on/off about 15 times a second.
   let turboMask = 0, turboPhase = true, turboTimer = null, rawHeld = 0, paintedRaw = -1;
+  // Double-tap a shoulder button to lock it held; tap again to release.
+  let latched = 0;
+  const lastTap = new Map();
   let bitEls = [];
   let dpadEls = [];
 
@@ -73,6 +76,7 @@
       if (p.kind === 'stick') { s.a[p.idx * 2] = p.vec[0]; s.a[p.idx * 2 + 1] = p.vec[1]; }
       else s.b |= p.bits || 0;
     }
+    s.b |= latched;
     const newly = s.b & ~touch.b;
     touch = s;
     if (newly) buzz();
@@ -104,7 +108,12 @@
     });
   }
 
+  function paintLatch() {
+    root.querySelectorAll('[data-latch]').forEach((el) => el.classList.toggle('latched', !!(latched & maskOf(el.dataset.btn))));
+  }
   function index() {
+    latched = 0;
+    lastTap.clear();
     bitEls = [...root.querySelectorAll('[data-btn]')].map((el) => ({ el, mask: maskOf(el.dataset.btn) }));
     dpadEls = [...root.querySelectorAll('[data-dpad]')];
     paintedRaw = -1;
@@ -131,6 +140,21 @@
       setTimeout(() => t.classList.remove('on'), 140);
       opts.onAction && opts.onAction(t.dataset.act);
       return;
+    }
+    if (t.dataset.latch != null && PS.prefs.latch !== false) {
+      const mask = maskOf(t.dataset.btn);
+      const now = performance.now();
+      if (latched & mask) { // tap a locked button to let go
+        latched &= ~mask;
+        buzz(); paintLatch(); recompute();
+        return;
+      }
+      if (now - (lastTap.get(mask) || -1e9) < 320) {
+        latched |= mask;
+        lastTap.delete(mask);
+        paintLatch();
+        opts.onLatch && opts.onLatch(t.textContent.trim());
+      } else lastTap.set(mask, now);
     }
     const p = { id: e.pointerId, bits: 0, vec: [0, 0] };
     if (t.dataset.stick != null) {
@@ -212,11 +236,19 @@
   addEventListener('keyup', onKey);
 
   // ---------- layouts ----------
+  // extras: { ff: host fast-forward button, psp: PSP layout, shoulders: 'thumbs' | 'corners' }
   function renderDefault(withSticks, extras = {}) {
-    root.className = 'pad pad-default' + (withSticks ? ' with-sticks' : '');
+    const psp = !!extras.psp;
+    if (psp) withSticks = true; // the PSP nub
+    root.className = 'pad pad-default' + (withSticks ? ' with-sticks' : '') + (psp ? ' psp' : '')
+      + (extras.shoulders === 'corners' ? ' sh-corners' : ' sh-thumbs');
+    const shoulders = psp
+      ? `<div class="shoulders left"><b class="big" data-btn="${B.l1}" data-latch>L</b></div>
+         <div class="shoulders right"><b class="big" data-btn="${B.r1}" data-latch>R</b></div>`
+      : `<div class="shoulders left"><b class="sm" data-btn="${B.l2}" data-latch>L2</b><b class="big" data-btn="${B.l1}" data-latch>L1</b></div>
+         <div class="shoulders right"><b class="big" data-btn="${B.r1}" data-latch>R1</b><b class="sm" data-btn="${B.r2}" data-latch>R2</b></div>`;
     root.innerHTML = `
-      <div class="shoulders left"><b data-btn="${B.l2}">L2</b><b data-btn="${B.l1}">L1</b></div>
-      <div class="shoulders right"><b data-btn="${B.r1}">R1</b><b data-btn="${B.r2}">R2</b></div>
+      ${shoulders}
       <div class="dpad" data-dpad="${B.up},${B.down},${B.left},${B.right}">
         <i class="arm u"></i><i class="arm d"></i><i class="arm l"></i><i class="arm r"></i>
       </div>
@@ -233,8 +265,8 @@
       </div>
       ${withSticks ? `
       <div class="stick s0" data-stick="0"><span class="knob"></span></div>
-      <div class="stick s1" data-stick="1"><span class="knob"></span></div>
-      <div class="l3r3"><b class="pill" data-btn="${B.l3}">L3</b><b class="pill" data-btn="${B.r3}">R3</b></div>` : ''}
+      ${psp ? '' : `<div class="stick s1" data-stick="1"><span class="knob"></span></div>
+      <div class="l3r3"><b class="pill" data-btn="${B.l3}">L3</b><b class="pill" data-btn="${B.r3}">R3</b></div>`}` : ''}
     `;
     index();
   }
@@ -310,6 +342,7 @@
   }
 
   function setTurbo(mask) { turboMask = mask | 0; merge(); }
+  function releaseLatches() { latched = 0; paintLatch(); recompute(); }
 
-  PS.controls = { init, renderDefault, renderDelta, setTurbo, state: () => out, B };
+  PS.controls = { init, renderDefault, renderDelta, setTurbo, releaseLatches, state: () => out, B };
 })();

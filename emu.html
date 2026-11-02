@@ -6,6 +6,14 @@
 <title>PhoStation emulator</title>
 <!-- Runs inside the main page. Swapping games replaces this whole frame, so the room stays connected. -->
 <script src="js/boot.js"></script>
+<script>
+  // Pass emulator errors up to the main page, so they can be shown instead of a silent blank screen.
+  (function () {
+    var report = function (msg) { try { parent.PS && parent.PS.emuError && parent.PS.emuError(String(msg)); } catch (e) {} };
+    addEventListener('error', function (e) { report(e.message || (e.target && e.target.src ? 'Couldn\u2019t load ' + e.target.src : 'Unknown error')); }, true);
+    addEventListener('unhandledrejection', function (e) { report((e.reason && (e.reason.message || e.reason)) || 'Unknown error'); });
+  })();
+</script>
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   #game { width: 100%; height: 100%; }

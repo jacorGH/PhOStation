@@ -2,7 +2,8 @@
 (function () {
   const PS = window.PS;
   const DATA = 'https://cdn.emulatorjs.org/stable/data/';
-  const STAGE_W = 640, STAGE_H = 480;
+  const STAGE_W = 640;
+  let STAGE_H = 480; // 4:3 for PS1; 16:9 (640x363) for PSP, set by PS.view.setSystem
 
   let handlers = {};
   let gameName = 'game';
@@ -15,7 +16,7 @@
   const AX = [[16, 17], [18, 19], [20, 21], [22, 23]];
 
   // The emulator lives in an iframe (emu.html). W is that frame's window.
-  let frameEl = null, W = null, poll = null, look = { filter: 'sharp', ejsUi: false };
+  let frameEl = null, W = null, poll = null, look = { filter: 'sharp', ejsUi: false }, system = 'psx';
   const emu = () => W && W.EJS_emulator;
   const gm = () => emu() && emu().gameManager;
   const clean = (n) => n.replace(/[#<$+%>!`&*'|{}/\\?"=@:^\r\n]/g, '').trim() || 'game';
@@ -97,7 +98,7 @@
   };
   function setPerf(name) {
     const g = gm();
-    if (!g) return;
+    if (!g || system !== 'psx') return; // presets are PS1 (PCSX-ReARMed) options
     const o = perfOpts(name);
     for (const k in o) { try { g.setVariable(k, o[k]); } catch (e) {} }
   }
@@ -162,15 +163,17 @@
     applyLook();
 
     W.EJS_player = '#game';
-    W.EJS_core = 'psx';
+    system = opts.system === 'psp' ? 'psp' : 'psx';
+    W.EJS_core = system;
+    if (system === 'psp') W.EJS_threads = true; // PPSSPP only runs threaded
     W.EJS_pathtodata = DATA;
     // Only fetched by EmulatorJS for .zip/.7z, or if the direct write can't be installed.
     W.EJS_gameUrl = URL.createObjectURL(files[0]);
     W.EJS_gameName = archive ? gameName : clean(files[0].name);
     W.EJS_startOnLoaded = true;
     W.EJS_color = '#eaa64a';
-    W.EJS_defaultOptions = Object.assign(perfOpts(opts.perf), multitapOpts(!!opts.multitap));
-    if (opts.bios) W.EJS_biosUrl = await prepareBios(opts.bios);
+    W.EJS_defaultOptions = system === 'psp' ? {} : Object.assign(perfOpts(opts.perf), multitapOpts(!!opts.multitap));
+    if (opts.bios && system === 'psx') W.EJS_biosUrl = await prepareBios(opts.bios);
 
     const fireStarted = () => {
       if (started) return;
@@ -363,7 +366,7 @@
     apply(area, frame, inner, r, stretch) {
       const W = area.clientWidth, H = area.clientHeight;
       if (!W || !H) return;
-      const asp = (4 * r.w) / (3 * r.h);
+      const asp = (STAGE_W * r.w) / (STAGE_H * r.h);
       let fw = W, fh = W / asp;
       if (stretch) fh = H;
       else if (fh > H) { fh = H; fw = H * asp; }
@@ -372,12 +375,19 @@
       const sx = fw / (STAGE_W * r.w), sy = fh / (STAGE_H * r.h);
       inner.style.transform = `scale(${sx}, ${sy}) translate(${-r.x * STAGE_W}px, ${-r.y * STAGE_H}px)`;
     },
+    // The PSP screen is 480x272 (about 16:9); the PS1's is 4:3.
+    setSystem(system) {
+      STAGE_H = system === 'psp' ? Math.round((STAGE_W * 272) / 480) : 480;
+      document.documentElement.style.setProperty('--stage-h', STAGE_H + 'px');
+      const play = document.getElementById('play');
+      if (play) play.dataset.system = system === 'psp' ? 'psp' : 'psx';
+    },
   };
 
   PS.emu = {
     load, setInput, releaseAll, captureStream, canvas, setPerf, measureFps, setUncapped, canUncap,
     saveState, loadState, crumb, setFastForward, setPaused, screenshot, normalizeCheat, applyCheats, cheatsSupported,
-    get paused() { return paused; }, get gameName() { return gameName; }, unload,
+    get paused() { return paused; }, get gameName() { return gameName; }, get system() { return system; }, unload,
     setFilter(f) { look.filter = f; applyLook(); },
     setEjsUi(on) { look.ejsUi = !!on; applyLook(); }, stateInfo, restart, setMultitap, toggleFastForward,
     get started() { return started; },

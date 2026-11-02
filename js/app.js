@@ -188,12 +188,12 @@
     $('#pickTitle').textContent = games.length ? 'Add another game' : 'Choose a game';
     $('#libList').innerHTML = games.map((g) => {
       const named = (g.names || []).map((name) => ({ name }));
-      const shrinkable = !g.names || PS.shrink.canShrink(named);
+      const shrinkable = g.system !== 'psp' && (!g.names || PS.shrink.canShrink(named));
       const isPbp = named.some((f) => /\.pbp$/i.test(f.name));
       const busy = S.shrinking === g.id;
       return `
       <div class="game ${g.id === S.gameId ? 'sel' : ''} ${busy ? 'busy' : ''}" data-gid="${g.id}">
-        <button data-pick="${g.id}" ${busy ? 'disabled' : ''}><b>${esc(g.title)}</b><small>${fmtSize(g.size)}${isPbp ? ' .pbp' : ''}, ${fmtWhen(g.played)}</small></button>
+        <button data-pick="${g.id}" ${busy ? 'disabled' : ''}><b>${g.system === 'psp' ? '<span class="badge">PSP</span>' : ''}${esc(g.title)}</b><small>${fmtSize(g.size)}${isPbp ? ' .pbp' : ''}, ${fmtWhen(g.played)}</small></button>
         ${shrinkable && !isPbp ? `<button class="act" data-shrink="${g.id}" ${S.shrinking ? 'disabled' : ''}>Shrink</button>` : ''}
         ${isPbp ? `<button class="act" data-save="${g.id}">Save</button>` : ''}
         <button class="del" data-del="${g.id}" aria-label="Remove ${esc(g.title)}" ${busy ? 'disabled' : ''}>×</button>
@@ -222,6 +222,7 @@
     const files = await PS.library.files(id).catch(() => null);
     const g = (await PS.library.list()).find((x) => x.id === id);
     if (!files || !g) { toast('That game\u2019s files are missing. Add it again.'); return; }
+    if (g.system === 'psp' || (await PS.system.detect(files)) === 'psp') { toast('PSP games can\u2019t be shrunk to .pbp. Use a .cso copy for a smaller file.'); return; }
     if (!PS.shrink.canShrink(files)) { toast('Only .bin/.cue, .img, or raw .iso discs can be shrunk. This one is already compact.'); return; }
     S.shrinking = id;
     await renderLibrary();
@@ -273,6 +274,9 @@
       setPerfChoice(g.perf || P.perf || 'balanced');
       if (!g.names) PS.library.update(id, { names: files.map((f) => f.name) }).catch(() => {});
     }
+    S.system = (g && g.system) || (await PS.system.detect(files));
+    if (g && !g.system) PS.library.update(id, { system: S.system }).catch(() => {});
+    showSystemNote();
     $('#gamePick').classList.remove('set');
     $('#gameName').textContent = PICK_HINT;
     $('#startBtn').disabled = false;
@@ -355,7 +359,7 @@
       } catch (err) { err.archive = true; throw err; }
       const rawOnDisk = files.every((f) => f.__opfs === rawDir);
 
-      if (PS.shrink.canShrink(files)) {
+      if (PS.shrink.canShrink(files) && (await PS.system.detect(files)) !== 'psp') {
         try {
           addCrumb('compress', title, 0);
           const r = await PS.shrink.toPbp(files, title, pbpDir, (p, extra) => {
@@ -405,6 +409,30 @@
   };
   $('#biosClear').onclick = async () => { setBios(null); try { await PS.store.del('bios'); } catch (e) {} };
 
+  // ---------- PS1 vs PSP ----------
+  function showSystemNote() {
+    const psp = S.system === 'psp';
+    $('#multitapRow').hidden = psp;
+    $('#speedRow').hidden = psp;
+    const note = $('#pspNote');
+    if (!psp) { note.hidden = true; return; }
+    const sup = PS.system.pspSupport();
+    note.hidden = false;
+    note.className = 'notice' + (sup.ok ? ' info' : '');
+    note.textContent = !sup.ok ? sup.why
+      : sup.experimental
+        ? 'Experimental: PSP on iPhone isn\u2019t officially supported, so it may show a blank screen, run slowly or close. If an error appears, it will be shown here. One controller: whoever holds P1 plays.'
+        : 'PSP game. A PSP has one controller, so whoever holds P1 plays; pass it in the menu under Players. PSP is demanding, so a recent phone or a computer works best.';
+  }
+  // Can this device run the game? Returns false (and explains) if not.
+  function canRun(system) {
+    if (system !== 'psp') return true;
+    const sup = PS.system.pspSupport();
+    if (!sup.ok) { toast(sup.why, 8000); return false; }
+    return true;
+  }
+  const portsFor = (system, multitap) => (system === 'psp' ? 1 : multitap ? 4 : 2);
+
   // ---------- speed ----------
   const PERF_NOTES = {
     quality: 'Draws every frame with full sound effects. Needs a fast phone.',
@@ -422,15 +450,18 @@
   setPerfChoice(S.perf);
 
   $('#startBtn').onclick = async () => {
+    if (!canRun(S.system)) return;
     S.multitap = $('#multitapChk').checked;
     if (S.gameId) PS.library.update(S.gameId, { played: Date.now(), multitap: S.multitap, perf: S.perf }).catch(() => {});
     if (!S.net) { S.net = soloNet(); S.myPort = 0; }
-    S.net.setMaxPorts(S.multitap ? 4 : 2);
+    PS.view.setSystem(S.system);
+    S.net.setMaxPorts(portsFor(S.system, S.multitap));
+    S.net.setSystem && S.net.setSystem(S.system || 'psx');
     enterPlay();
     setWaiting('Preparing the disc…');
     try {
       await PS.emu.load({
-        files: S.files, bios: S.bios, multitap: S.multitap, perf: S.perf,
+        files: S.files, bios: S.bios, multitap: S.multitap, perf: S.perf, system: S.system,
         handlers: { progress: setWaiting, started: onGameStarted },
       });
     } catch (err) {
@@ -440,7 +471,7 @@
   // Stand-in when PeerJS is unavailable: the game still runs locally on P1.
   function soloNet() {
     return {
-      voiceOn: false, setMaxPorts() {}, setRunning() {}, setPaused() {}, destroy() {}, unlockAudio() {}, roster: () => [],
+      voiceOn: false, setMaxPorts() {}, setRunning() {}, setPaused() {}, setSystem() {}, swapStream() {}, notify() {}, destroy() {}, unlockAudio() {}, roster: () => [],
       voiceStart() { throw new Error('Voice needs the lobby connection.'); }, voiceStop() {},
     };
   }
@@ -509,17 +540,22 @@
       setWaiting('Saving your progress…');
       try { await PS.emu.saveState('auto'); } catch (e) {}
       hideResume();
+      const before = { id: S.gameId, files: S.files, system: S.system };
       await selectGame(id); // loads files, unpacks older packed games, restores per-game settings
       if (S.gameId !== id) throw new Error('That game couldn\u2019t be opened.');
+      if (!canRun(S.system)) { Object.assign(S, { gameId: before.id, files: before.files, system: before.system }); setWaiting(null); S.swapping = false; return; }
       S.multitap = $('#multitapChk').checked;
-      S.net.setMaxPorts(S.multitap ? 4 : 2);
+      S.net.setMaxPorts(portsFor(S.system, S.multitap));
+      S.net.setSystem && S.net.setSystem(S.system);
+      PS.view.setSystem(S.system);
+      renderPad();
       PS.library.update(id, { played: Date.now(), multitap: S.multitap, perf: S.perf }).catch(() => {});
       if (PS.emu.paused) { PS.emu.setPaused(false); S.net.setPaused && S.net.setPaused(false); $('#pausedBanner').hidden = true; }
       S.running = false;
       S.net.notify && S.net.notify('The host is changing the game…');
       setWaiting('Loading the new game…');
       await PS.emu.load({
-        files: S.files, bios: S.bios, multitap: S.multitap, perf: S.perf,
+        files: S.files, bios: S.bios, multitap: S.multitap, perf: S.perf, system: S.system,
         handlers: { progress: setWaiting, started: onGameStarted },
       });
     } catch (err) {
@@ -862,7 +898,10 @@
       if (S.role === 'host' && me.port != null && old !== me.port) PS.emu.setInput(me.port, PS.controls.state());
     }
     if (S.lockViews) S.localFull = false;
-    if (S.role === 'guest') $('#pausedBanner').hidden = !msg.paused;
+    if (S.role === 'guest') {
+      $('#pausedBanner').hidden = !msg.paused;
+      if ((msg.system || 'psx') !== (S.system || 'psx')) { S.system = msg.system || 'psx'; PS.view.setSystem(S.system); renderPad(); }
+    }
     $('#micBtn').classList.toggle('on', !!(S.net && S.net.voiceOn));
     applyView();
     const key = JSON.stringify([msg.roster.map((m) => [m.clientId, m.name, m.port, m.voice, m.connected]), msg.view, msg.lockViews, msg.locked, msg.maxPorts, msg.quality, msg.running]);
@@ -884,6 +923,7 @@
       else if (S.net) S.net.sendInput(st);
     },
     onAction: handleAction,
+    onLatch: (name) => toast(`${name} held. Tap it to let go.`, 1600),
     keyboard: () => S.role === 'guest',
     gamepad: () => S.role === 'guest',
   });
@@ -895,7 +935,7 @@
       play.classList.remove('delta');
       scr.removeAttribute('style');
       $('#skinBg').innerHTML = '';
-      PS.controls.renderDefault(S.skinId === 'sticks', { ff: S.role === 'host' });
+      PS.controls.renderDefault(S.skinId === 'sticks', { ff: S.role === 'host', psp: S.system === 'psp', shoulders: P.shoulders || 'thumbs' });
     } else {
       const skin = await PS.delta.load(S.skinId).catch(() => null);
       if (!skin) { S.skinId = P.skin = 'default'; return renderPad(); }
@@ -1036,7 +1076,7 @@
         <div class="seg four">${views.map(([v, l]) => `<button data-do="view" data-v="${v}" class="${st.view === v ? 'on' : ''}">${l}</button>`).join('')}</div>
         <label class="toggle"><input type="checkbox" data-do="lockviews" ${st.lockViews ? 'checked' : ''}><span><b>No screen watching</b><small>Players can\u2019t switch to the whole screen</small></span></label>`;
       html += `<h3>Room</h3>
-        <label class="toggle"><input type="checkbox" data-do="multitap" ${st.maxPorts === 4 ? 'checked' : ''}><span><b>Multitap, 4 ports</b><small>Restarts the game to apply</small></span></label>
+        ${S.system === 'psp' ? '<p class="note">PSP: one controller. Give P1 to whoever plays, in Players above.</p>' : `<label class="toggle"><input type="checkbox" data-do="multitap" ${st.maxPorts === 4 ? 'checked' : ''}><span><b>Multitap, 4 ports</b><small>Restarts the game to apply</small></span></label>`}
         <label class="toggle"><input type="checkbox" data-do="lock" ${st.locked ? 'checked' : ''}><span><b>Lock room</b><small>No new people can join. Dropped players can still return.</small></span></label>
         <label class="field inline"><span>Stream quality</span><select data-do="quality">
           <option value="auto" ${st.quality === 'auto' ? 'selected' : ''}>Automatic</option>
@@ -1054,15 +1094,15 @@
             <button class="mini" data-do="load" data-slot="${i}" ${info ? '' : 'disabled'}>Load</button></div>`;
         }
         html += `</div><h3>Speed</h3>
-          <div class="seg quad">${['quality', 'balanced', 'fast', 'turbo'].map((v) => `<button data-do="perf" data-v="${v}" class="${S.perf === v ? 'on' : ''}">${v[0].toUpperCase() + v.slice(1)}</button>`).join('')}</div>
-          <p class="note">${PERF_NOTES[S.perf]}</p>
+          ${S.system === 'psp' ? '' : `<div class="seg quad">${['quality', 'balanced', 'fast', 'turbo'].map((v) => `<button data-do="perf" data-v="${v}" class="${S.perf === v ? 'on' : ''}">${v[0].toUpperCase() + v.slice(1)}</button>`).join('')}</div>
+          <p class="note">${PERF_NOTES[S.perf]}</p>`}
           ${PS.emu.canUncap() ? `<label class="toggle"><input type="checkbox" data-do="uncap" ${S.uncapped ? 'checked' : ''}><span><b>Ignore the 30 fps screen limit</b><small>Use when Low Power Mode is on. Turns itself on when needed.</small></span></label>` : ''}`;
         html += `<h3>Game</h3><div class="row2">
           <button class="ghost" data-do="ff">${S.ff ? 'Stop fast forward' : 'Fast forward'}</button>
           <button class="ghost" data-do="restart">Restart</button></div>
           <button class="ghost wide" data-do="swap">Change game</button>
           <button class="ghost wide" data-do="ejs">${S.ejsUi ? 'Hide emulator menu' : 'Show emulator menu'}</button>`;
-        html += cheatsHtml();
+        if (S.system !== 'psp') html += cheatsHtml();
       }
     } else if (!st.lockViews && S.myPort != null && st.view !== 'full') {
       html += `<h3>View</h3><label class="toggle"><input type="checkbox" data-do="localfull" ${S.localFull ? 'checked' : ''}><span><b>Show the whole screen</b><small>The host allows it in this room</small></span></label>`;
@@ -1087,7 +1127,11 @@
   const TURBO = [['Cross', 0], ['Circle', 8], ['Square', 1], ['Triangle', 9], ['L1', 10], ['R1', 11], ['L2', 12], ['R2', 13]];
   function padLookHtml() {
     const t = P.turbo || 0;
-    return `<h3>Turbo buttons</h3><p class="note">Held turbo buttons press themselves about 15 times a second.</p>
+    const sh = P.shoulders || 'thumbs';
+    return `<h3>L and R buttons</h3>
+      <div class="seg"><button data-do="shoulders" data-v="thumbs" class="${sh === 'thumbs' ? 'on' : ''}">Near thumbs</button><button data-do="shoulders" data-v="corners" class="${sh === 'corners' ? 'on' : ''}">Top corners</button></div>
+      <label class="toggle"><input type="checkbox" data-do="latch" ${P.latch !== false ? 'checked' : ''}><span><b>Double-tap L or R to hold it</b><small>Keeps it pressed (it glows) until you tap it again. Handy for running, aiming or guarding.</small></span></label>
+      <h3>Turbo buttons</h3><p class="note">Held turbo buttons press themselves about 15 times a second.</p>
       <div class="chips">${TURBO.map(([l, b]) => `<button data-do="turbo" data-b="${b}" class="chip-t ${t & (1 << b) ? 'on' : ''}">${l}</button>`).join('')}</div>
       <label class="range"><span>Controller size</span><input type="range" min="0.75" max="1.3" step="0.05" value="${P.padSize || 1}" data-do="padsize"></label>
       <label class="range"><span>Controller opacity</span><input type="range" min="0.25" max="1" step="0.05" value="${P.padAlpha == null ? 1 : P.padAlpha}" data-do="padalpha"></label>`;
@@ -1153,6 +1197,8 @@
         case 'shot': await takeScreenshot(); break;
         case 'filter': P.filter = t.dataset.v; applyLook(); renderSheet(); break;
         case 'fit': P.fit = t.dataset.v; applyView(); renderSheet(); break;
+        case 'shoulders': P.shoulders = t.dataset.v; renderPad(); renderSheet(); break;
+        case 'latch': P.latch = t.checked; if (!t.checked) PS.controls.releaseLatches(); break;
         case 'turbo': P.turbo = (P.turbo || 0) ^ (1 << +t.dataset.b); applyLook(); t.classList.toggle('on'); break;
         case 'padsize': P.padSize = +t.value; applyLook(); break;
         case 'padalpha': P.padAlpha = +t.value; applyLook(); break;
@@ -1185,6 +1231,7 @@
           if (S.role === 'host') net.destroy(); else net.leave();
           setTimeout(() => (location.href = location.pathname), 350);
           break;
+        case 'pspexp': setPspExperimental(t.checked); break;
         case 'relaymode': P.relayMode = t.dataset.v; renderSettings(); break;
         case 'sharerelay': P.shareRelay = t.checked; break;
         case 'relayguide': relayGuide(); break;
@@ -1242,9 +1289,44 @@
       <div class="row2"><button class="ghost" data-do="relaysave">Save and test</button><button class="ghost" data-do="relayguide">Setup guide</button></div>
       <p class="dstatus" id="relayStatus"></p>
       <label class="toggle"><input type="checkbox" data-do="sharerelay" ${P.shareRelay ? 'checked' : ''}><span><b>Share my relay with friends I invite</b><small>Invites carry short-lived relay logins (valid up to a day), so friends on strict networks can still connect.</small></span></label>
+      ${experimentalHtml()}
       <h3>About</h3>
       <p class="note">PhoStation runs EmulatorJS with the PCSX-ReARMed core. Bring your own game discs and BIOS.</p>`;
   }
+
+  // ---------- experimental: PSP on iPhone ----------
+  function experimentalHtml() {
+    const r = PS.system.readiness();
+    const row = (ok, label, detail) => `<div class="check" data-s="${ok ? 'ok' : 'bad'}"><span class="ic"></span><span>${label}<small>${detail}</small></span></div>`;
+    return `<h3>Experimental</h3>
+      ${PS.system.isWebKitOnly ? `
+      <label class="toggle"><input type="checkbox" data-do="pspexp" ${P.pspExperimental ? 'checked' : ''}><span><b>Try PSP on this ${/iPad/.test(navigator.userAgent) ? 'iPad' : 'iPhone'}</b>
+        <small>The PSP emulator doesn\u2019t officially support Safari\u2019s engine. This switches on a stricter isolation mode Safari supports and reloads the app. It may work, show a blank screen or close. PS1 games aren\u2019t affected; switch it off if anything else stops loading.</small></span></label>` : ''}
+      <p class="note">What PSP needs from this browser:</p>
+      <div class="checks">
+        ${row(r.isolated, 'Cross-origin isolation', r.isolated ? 'On' : 'Off (switched on by the app after a reload)')}
+        ${row(r.sab, 'Shared memory for threads', r.sab ? 'Available' : 'Not available')}
+        ${row(r.webgl2, 'WebGL 2 graphics', r.webgl2 ? 'Available' : 'Not available')}
+      </div>`;
+  }
+  async function setPspExperimental(on) {
+    P.pspExperimental = on;
+    const mode = on ? 'require-corp' : 'credentialless';
+    try { await PS.store.set('coiMode', mode); } catch (e) {}
+    try { navigator.serviceWorker && navigator.serviceWorker.controller && navigator.serviceWorker.controller.postMessage({ coiMode: mode }); } catch (e) {}
+    sessionStorage.removeItem('phostation.coi');
+    toast(on ? 'Experimental PSP mode on. Reloading…' : 'Experimental PSP mode off. Reloading…', 2500);
+    setTimeout(() => location.reload(), 900);
+  }
+
+  // Errors from inside the emulator frame, shown instead of a silent blank screen.
+  let lastEmuError = 0;
+  PS.emuError = (msg) => {
+    console.warn('[emulator]', msg);
+    if (Date.now() - lastEmuError < 4000) return;
+    lastEmuError = Date.now();
+    if (document.body.dataset.view === 'play' && S.role === 'host') toast('Emulator: ' + String(msg).slice(0, 160), 7000);
+  };
 
   // ---------- your relay ----------
   async function saveRelay() {
@@ -1321,7 +1403,16 @@
   }
 
   // ---------- service worker ----------
-  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
+    // PSP needs a cross-origin-isolated page, which the service worker provides from the next load.
+    // Reload once, only on the start screen, only where PSP can run at all.
+    if ((!PS.system.isWebKitOnly || P.pspExperimental) && !window.crossOriginIsolated && !sessionStorage.getItem('phostation.coi')) {
+      navigator.serviceWorker.ready.then(() => {
+        if (window.crossOriginIsolated || document.body.dataset.view !== 'home') return;
+        sessionStorage.setItem('phostation.coi', '1');
+        location.reload();
+      });
+    }
   }
 })();

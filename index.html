@@ -67,8 +67,9 @@
       <label><input type="file" id="biosFile"><b>BIOS file</b><span id="biosName">Optional. The built-in BIOS runs most games.</span></label>
       <button class="x" id="biosClear" hidden aria-label="Forget BIOS">×</button>
     </div>
-    <label class="toggle"><input type="checkbox" id="multitapChk"><span><b>Multitap</b><small>Needed for 3–4 player games like Crash Team Racing</small></span></label>
-    <div class="speed">
+    <p class="notice" id="pspNote" hidden></p>
+    <label class="toggle" id="multitapRow"><input type="checkbox" id="multitapChk"><span><b>Multitap</b><small>Needed for 3–4 player games like Crash Team Racing</small></span></label>
+    <div class="speed" id="speedRow">
       <span class="lbl">Speed</span>
       <div class="seg quad" id="perfSeg">
         <button data-perf="quality">Quality</button><button data-perf="balanced">Balanced</button><button data-perf="fast">Fast</button><button data-perf="turbo">Turbo</button>
@@ -164,6 +165,7 @@
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="js/emu.js"></script>
+<script src="js/system.js"></script>
 <script src="js/library.js"></script>
 <script src="js/shrink.js"></script>
 <script src="js/unpack.js"></script>

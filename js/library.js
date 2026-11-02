@@ -37,8 +37,9 @@
     if (existing) return existing;
     const id = opts.id || newId();
     await PS.store.set('game:' + id, await record(files, opts.opfsDir));
+    const system = await PS.system.detect(files).catch(() => 'psx');
     const entry = {
-      id, ...m, srcSig: opts.srcSig || null,
+      id, ...m, system, srcSig: opts.srcSig || null,
       title: (opts.title || stripExt(mainName(files))).replace(/\s*\(disc 1\)\s*/i, ' ').trim(),
       added: Date.now(), played: 0, multitap: !!multitap,
     };
@@ -71,7 +72,7 @@
   // Swap a game's files (e.g. after shrinking to .pbp) but keep its place, settings and history.
   async function replaceFiles(id, files, opfsDir) {
     await PS.store.set('game:' + id, await record(files, opfsDir));
-    await update(id, meta(files));
+    await update(id, { ...meta(files), system: await PS.system.detect(files).catch(() => 'psx') });
   }
 
   async function remove(id) {

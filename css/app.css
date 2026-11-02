@@ -179,7 +179,7 @@ button { cursor: pointer; }
 }
 #frame { position: relative; overflow: hidden; flex: none; pointer-events: none; background: #000; }
 body.ejs-ui #frame { pointer-events: auto; }
-#game, #remote { position: absolute; left: 0; top: 0; width: 640px; height: 480px; transform-origin: 0 0; }
+#game, #remote { position: absolute; left: 0; top: 0; width: 640px; height: var(--stage-h, 480px); transform-origin: 0 0; }
 #remote { object-fit: fill; background: #000; }
 body.is-host #remote { display: none; }
 body.is-guest #game { display: none; }
@@ -493,3 +493,58 @@ body.ejs-ui #pad { visibility: hidden; }
 ul.kv { margin: 8px 0; padding-left: 18px; font-size: 14.5px; }
 ul.kv li { margin: 4px 0; }
 #modal code { font: 12.5px ui-monospace, Menlo, monospace; background: var(--glaze-deep); border: 1px solid var(--line); border-radius: 6px; padding: 1px 5px; white-space: nowrap; }
+
+
+/* ---------- shoulder buttons (L/R) ---------- */
+.pad-default .shoulders { display: flex; gap: 8px; }
+.pad-default .shoulders b {
+  position: relative; height: 50px; flex: 2; min-width: 0; display: grid; place-items: center;
+  border-radius: 18px 18px 10px 10px; font: 800 16px/1 var(--round); color: var(--porcelain);
+  background: rgba(241,233,218,.1); border: 1.5px solid rgba(241,233,218,.26);
+}
+.pad-default .shoulders b.sm { flex: 1.25; font-size: 14px; color: var(--muted); }
+/* forgiving touch area beyond the visible button */
+.pad-default .shoulders b::after { content: ""; position: absolute; inset: -14px -6px -10px; }
+.pad .latched { background: rgba(234,166,74,.5) !important; border-color: var(--broth) !important; color: #2b1a05 !important; box-shadow: 0 0 0 3px rgba(234,166,74,.25); }
+
+/* near thumbs: a row right above the D-pad and the face buttons */
+.pad-default.sh-thumbs .shoulders { top: 12px; width: var(--u); }
+.pad-default.sh-thumbs .shoulders.left { left: max(5%, var(--sl)); }
+.pad-default.sh-thumbs .shoulders.right { right: max(5%, var(--sr)); }
+.pad-default.sh-thumbs .dpad, .pad-default.sh-thumbs .face { top: 82px; }
+/* top corners: the old spot, but bigger */
+.pad-default.sh-corners .shoulders { top: 8px; width: min(40vw, 200px); }
+.pad-default.sh-corners .shoulders.left { left: max(3%, var(--sl)); }
+.pad-default.sh-corners .shoulders.right { right: max(3%, var(--sr)); }
+.pad-default.sh-corners .dpad, .pad-default.sh-corners .face { top: 76px; }
+
+.pad-default.with-sticks { --u: calc(min(36vw, 26vh, 170px) * var(--pad-scale, 1)); }
+.pad-default.with-sticks .stick { width: calc(var(--u) * .58); height: calc(var(--u) * .58); }
+.pad-default.psp .stick.s0 { left: auto; right: auto; left: 50%; transform: translateX(-50%); bottom: calc(18% + var(--sb)); }
+
+@media (orientation: landscape) {
+  .pad-default.sh-thumbs .shoulders { top: auto; bottom: calc(9% + var(--sb) + var(--u) + 16px); }
+  .pad-default.sh-thumbs .dpad, .pad-default.sh-thumbs .face { top: auto; bottom: calc(9% + var(--sb)); }
+  .pad-default.sh-corners .shoulders { top: calc(var(--st) + 3%); width: min(26vw, 210px); }
+  .pad-default.sh-corners .dpad, .pad-default.sh-corners .face { top: auto; bottom: calc(9% + var(--sb)); }
+  .pad-default.with-sticks { --u: calc(min(34vh, 18vw, 160px) * var(--pad-scale, 1)); }
+  .pad-default.with-sticks .stick.s0 { top: auto; left: calc(max(5%, var(--sl)) + var(--u) + 14px); bottom: calc(9% + var(--sb)); width: calc(var(--u) * .62); height: calc(var(--u) * .62); }
+  .pad-default.with-sticks .stick.s1 { top: auto; right: calc(max(5%, var(--sr)) + var(--u) + 14px); bottom: calc(9% + var(--sb)); width: calc(var(--u) * .62); height: calc(var(--u) * .62); }
+  .pad-default.psp .stick.s0 { transform: none; }
+}
+
+.badge { display: inline-block; margin-right: 6px; padding: 2px 6px; border-radius: 6px; font: 800 11px/1.3 var(--round); letter-spacing: .04em; background: #2f63b6; color: #fff; vertical-align: 2px; }
+.notice.info { background: rgba(127,180,255,.12); border-color: rgba(127,180,255,.4); color: #cfe0ff; }
+.toggle[hidden], .speed[hidden] { display: none; }
+
+#play[data-system=psp] #screen { aspect-ratio: 16 / 9; }
+/* portrait, regular pad: sit the L/R row and clusters lower, where thumbs rest */
+@media (orientation: portrait) {
+  .pad-default.sh-thumbs:not(.with-sticks) { --top: max(12px, calc(46% - var(--u) / 2 - 40px)); }
+  .pad-default.sh-thumbs:not(.with-sticks) .shoulders { top: var(--top); }
+  .pad-default.sh-thumbs:not(.with-sticks) .dpad, .pad-default.sh-thumbs:not(.with-sticks) .face { top: calc(var(--top) + 70px); }
+}
+@media (orientation: portrait) {
+  /* PSP nub under the D-pad, like the real thing */
+  .pad-default.psp .stick.s0 { left: calc(max(5%, var(--sl)) + var(--u) / 2); bottom: auto; top: calc(82px + var(--u) + 16px); transform: translateX(-50%); }
+}
