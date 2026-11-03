@@ -548,3 +548,5 @@ ul.kv li { margin: 4px 0; }
   /* PSP nub under the D-pad, like the real thing */
   .pad-default.psp .stick.s0 { left: calc(max(5%, var(--sl)) + var(--u) / 2); bottom: auto; top: calc(82px + var(--u) + 16px); transform: translateX(-50%); }
 }
+
+.spinner[hidden] { display: none; }

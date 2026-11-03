@@ -24,13 +24,14 @@ BIOS is optional. The core's built-in BIOS runs most games, and a real BIOS (e.g
 
 ## PSP games
 
-PSP games (.iso, .cso, .pbp, .chd) are recognised automatically and get a PSP controller (L/R and the analog nub) and a widescreen picture.
+PSP games (.iso, .cso, .pbp) are recognised automatically and get a PSP controller (L/R and the analog nub) and a widescreen picture.
 
 - **Host from Android or a computer** (Chrome or Edge). EmulatorJS doesn't officially support its PSP emulator on Safari's engine, which every iPhone and iPad browser uses. iPhones can always join a PSP room, because guests only receive the video.
 - **Experimental: PSP on iPhone.** Settings > Experimental > *Try PSP on this iPhone*. This switches the service worker to the stricter isolation mode Safari supports (COEP `require-corp`) and re-requests files from other sites with CORS so they're still allowed. The section also shows a readiness check (isolation, shared memory, WebGL 2), and errors from inside the emulator are shown on screen. It may work, show a blank screen or close; switch it off to return to normal.
 - **PSP check** (Settings > Experimental > Run full PSP check) tests exactly what the PSP emulator needs from the browser: isolation, shared memory and how much can be reserved, threads, WebGL 2 and float render targets, drawing from worker threads, and WebAssembly SIMD. *Copy report* includes the emulator's own log from the last PSP attempt (kept even if the page crashed), so problems can be pinned down.
 - The PSP emulator needs threads, which need a cross-origin-isolated page. GitHub Pages can't send those headers, so the service worker adds them; the app reloads itself once on first open to switch it on. It won't work from a code editor's preview.
 - Discs over 64 MB are streamed: the emulator reads 1 MB pieces from storage as the game needs them (with a 32 MB cache) instead of loading the whole disc into memory. That's what lets 1-2 GB PSP games start on phones, and it lowers memory for big PS1 discs too.
+- **PSP .chd files don't work**: EmulatorJS builds its PSP emulator without .chd support, so they stop with "missing function CHDFileBlockDevice". Use .iso or .cso. (PS1 .chd files are fine.) The app warns when you pick one and explains on screen if a game stops.
 - A PSP has one controller: whoever holds P1 plays. Pass it in the menu under Players.
 - PSP is demanding; recent phones and computers work best. .cso files are smaller than .iso.
 

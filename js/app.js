@@ -434,7 +434,10 @@
     const sup = PS.system.pspSupport();
     note.hidden = false;
     note.className = 'notice' + (sup.ok ? ' info' : '');
-    note.textContent = !sup.ok ? sup.why
+    const pspChd = (S.files || []).some((f) => /\.chd$/i.test(f.name));
+    note.textContent = pspChd
+      ? 'This PSP game is a .chd file, which the PSP emulator in EmulatorJS can\u2019t read (it\u2019s built without .chd support), so it won\u2019t start. Use an .iso or .cso copy instead. (PS1 .chd files work fine.)'
+      : !sup.ok ? sup.why
       : sup.experimental
         ? 'Experimental: PSP on iPhone isn\u2019t officially supported, so it may show a blank screen, run slowly or close. If an error appears, it will be shown here. One controller: whoever holds P1 plays.'
         : 'PSP game. A PSP has one controller, so whoever holds P1 plays; pass it in the menu under Players. PSP is demanding, so a recent phone or a computer works best.';
@@ -1376,6 +1379,25 @@
       <button class="big primary tight" id="labCopy"><b>Copy report</b></button>`;
     $('#labCopy').onclick = () => copyText(text, 'Report');
   }
+
+  // The emulator stopped for good ("Aborted"): explain on the game screen instead of leaving it black.
+  let fatalShown = false;
+  PS.emuFatal = (msg) => {
+    console.warn('[emulator fatal]', msg);
+    if (fatalShown) return;
+    fatalShown = true;
+    let text;
+    if (/CHDFileBlockDevice/.test(msg)) {
+      text = 'This PSP emulator can\u2019t read .chd files (EmulatorJS built it without .chd support), so the game can\u2019t start. Use an .iso or .cso copy of the game instead. PS1 .chd files are fine.';
+    } else if (/missing function/.test(msg)) {
+      text = 'The PSP emulator is missing a feature this game needs, so it stopped. Try the other PSP emulator build in Settings, Experimental, or send me the report from the PSP check.';
+    } else {
+      text = 'The emulator stopped with an error and can\u2019t continue. Leave and start the game again; if it keeps happening, send me the report from Settings, Experimental, Run full PSP check.';
+    }
+    setWaiting(text);
+    $('#waiting .spinner') && ($('#waiting .spinner').hidden = true);
+    toast('The emulator stopped', 4000);
+  };
 
   // Errors from inside the emulator frame, shown instead of a silent blank screen.
   let lastEmuError = 0;

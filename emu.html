@@ -18,6 +18,13 @@
       if (kind !== 'error' && /^Translation not found/.test(String(args && args[0]))) return; // menu noise
       log.push((new Date().toISOString().slice(11, 19) + ' ' + kind + ' ' + [].map.call(args, text).join(' ')).slice(0, 400));
       if (log.length > 300) log.splice(0, 100);
+      // The emulator prints "Aborted(...)" when it stops for good (errors from the CDN's scripts
+      // arrive here rather than as readable error events).
+      if (!window.__fatal && /Aborted\(/.test(log[log.length - 1])) {
+        window.__fatal = true;
+        save();
+        try { parent.PS && parent.PS.emuFatal && parent.PS.emuFatal(log[log.length - 1]); } catch (e) {}
+      }
       if (kind === 'error' || kind === 'warn' || kind === 'beat') save(); // saved at once, so it survives a crash
       else if (!timer) timer = setTimeout(function () { timer = null; save(); }, 1500);
     };
@@ -30,6 +37,8 @@
   (function () {
     var report = function (msg) {
       try { window.__emuLog('error', [msg]); } catch (e) {}
+      // "Aborted(...)" means the emulator stopped for good: tell the page so it can explain.
+      if (/Aborted\(/.test(String(msg))) { try { parent.PS && parent.PS.emuFatal && parent.PS.emuFatal(String(msg)); } catch (e) {} return; }
       try { parent.PS && parent.PS.emuError && parent.PS.emuError(String(msg)); } catch (e) {}
     };
     addEventListener('error', function (e) { report(e.message || (e.target && e.target.src ? 'Couldn\u2019t load ' + e.target.src : 'Unknown error')); }, true);
