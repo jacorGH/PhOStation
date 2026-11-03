@@ -195,10 +195,19 @@
     ppsspp_texture_deposterize: 'disabled',
     ppsspp_texture_replacement: 'disabled',
     ppsspp_lazy_texture_caching: 'enabled',
-    ppsspp_texture_filtering: 'auto',
+    ppsspp_texture_filtering: 'Auto',
     ppsspp_fast_memory: 'enabled',
-    ppsspp_spline_quality: 'low',
+    ppsspp_spline_quality: 'Low',
   };
+  // PSP speed presets. All use PPSSPP's IR interpreter ("IR JIT"), which is much faster than the
+  // plain Interpreter EmulatorJS defaults to, and needs no native code (PPSSPP uses it on iPhone).
+  const PSP_PERF = {
+    quality:  { ppsspp_cpu_core: 'IR JIT', ppsspp_auto_frameskip: 'disabled', ppsspp_frameskip: 'disabled', ppsspp_skip_buffer_effects: 'disabled', ppsspp_skip_gpu_readbacks: 'disabled', ppsspp_texture_anisotropic_filtering: '16x' },
+    balanced: { ppsspp_cpu_core: 'IR JIT', ppsspp_auto_frameskip: 'disabled', ppsspp_frameskip: 'disabled', ppsspp_skip_buffer_effects: 'disabled', ppsspp_skip_gpu_readbacks: 'enabled', ppsspp_texture_anisotropic_filtering: '4x' },
+    fast:     { ppsspp_cpu_core: 'IR JIT', ppsspp_auto_frameskip: 'enabled', ppsspp_frameskip: '1', ppsspp_skip_buffer_effects: 'disabled', ppsspp_skip_gpu_readbacks: 'enabled', ppsspp_texture_anisotropic_filtering: 'disabled' },
+    turbo:    { ppsspp_cpu_core: 'IR JIT', ppsspp_auto_frameskip: 'enabled', ppsspp_frameskip: '2', ppsspp_skip_buffer_effects: 'enabled', ppsspp_skip_gpu_readbacks: 'enabled', ppsspp_texture_anisotropic_filtering: 'disabled' },
+  };
+  const pspOpts = (name) => Object.assign({}, PSP_LIGHT, PSP_PERF[name] || PSP_PERF.balanced);
   const perfOpts = (name) => {
     const o = {};
     const p = PERF[name] || PERF.balanced;
@@ -208,8 +217,8 @@
   };
   function setPerf(name) {
     const g = gm();
-    if (!g || system !== 'psx') return; // presets are PS1 (PCSX-ReARMed) options
-    const o = perfOpts(name);
+    if (!g) return;
+    const o = system === 'psp' ? PSP_PERF[name] || PSP_PERF.balanced : perfOpts(name);
     for (const k in o) { try { g.setVariable(k, o[k]); } catch (e) {} }
   }
 
@@ -233,6 +242,34 @@
     const M = emu() && emu().Module;
     return !!(M && typeof (M._emscripten_set_main_loop_timing || M.setMainLoopTiming) === 'function');
   }
+
+  // ---------- auto-skip PSP videos ----------
+  // PSP video playback crashes Safari on iPhone, but skipping the video quickly avoids it.
+  // When the emulator reports a video starting, tap Start, Cross and Circle until it ends.
+  let autoSkip = false, skipTimer = null, skipUntil = 0, skips = 0;
+  const SKIP_BUTTONS = [3, 0, 8]; // Start, Cross, Circle
+  function startSkip() {
+    if (!autoSkip || !started || skipTimer) return; // sceMpegInit and sceMpegCreate both announce a video
+    skips++;
+    try { W.__emuLog('beat', ['[phostation] video started: auto-skipping']); } catch (e) {}
+    handlers.videoSkipped && handlers.videoSkipped(skips);
+    let i = 0;
+    skipUntil = Date.now() + 5000;
+    const tap = () => {
+      const g = gm();
+      if (!g || Date.now() > skipUntil) { stopSkip(); return; }
+      const b = SKIP_BUTTONS[i++ % SKIP_BUTTONS.length];
+      try { g.simulateInput(0, b, 1); } catch (e) {}
+      setTimeout(() => { try { g.simulateInput(0, b, 0); } catch (e) {} }, 50);
+    };
+    tap();
+    skipTimer = setInterval(tap, 120);
+  }
+  function stopSkip() { clearInterval(skipTimer); skipTimer = null; }
+  PS.emuVideo = (ev) => {
+    if (ev === 'start') startSkip();
+    else if (ev === 'stop' && skipTimer) { stopSkip(); try { W.__emuLog('beat', ['[phostation] video ended']); } catch (e) {} }
+  };
 
   // ---------- heartbeat ----------
   // Every 10 s while a game runs: uptime, emulator memory, emulator frame rate, disc reading.
@@ -370,7 +407,8 @@
     W.EJS_startOnLoaded = true;
     if (opts.debug) W.EJS_DEBUG_XX = true; // EmulatorJS debug mode: the core's own messages reach the log
     W.EJS_color = '#eaa64a';
-    W.EJS_defaultOptions = system === 'psp' ? Object.assign({}, PSP_LIGHT) : Object.assign(perfOpts(opts.perf), multitapOpts(!!opts.multitap));
+    W.EJS_defaultOptions = system === 'psp' ? pspOpts(opts.perf) : Object.assign(perfOpts(opts.perf), multitapOpts(!!opts.multitap));
+    autoSkip = system === 'psp' && !!opts.autoSkip;
     if (opts.bios && system === 'psx') W.EJS_biosUrl = await prepareBios(opts.bios);
 
     const fireStarted = () => {
@@ -395,6 +433,9 @@
       get: () => inst,
       set: (v) => {
         inst = v;
+        // Auto-skip needs the emulator's own messages (to see videos start). EmulatorJS only passes
+        // them on in debug mode; switch on just that, without loading its slower debug scripts.
+        if (autoSkip) { try { v.debug = true; } catch (e) {} }
         if (!archive) {
           injected = injectDisc(v, files, p);
           if (!injected && files.length > 1) {
@@ -417,6 +458,7 @@
 
   // Close the current game: flush memory-card saves, then drop the whole frame (frees its memory).
   async function unload() {
+    stopSkip();
     clearInterval(poll);
     clearInterval(beatTimer);
     stopWatchdog();

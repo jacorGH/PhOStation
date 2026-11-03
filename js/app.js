@@ -428,7 +428,7 @@
   function showSystemNote() {
     const psp = S.system === 'psp';
     $('#multitapRow').hidden = psp;
-    $('#speedRow').hidden = psp;
+    setPerfChoice(S.perf); // notes differ for PSP
     const note = $('#pspNote');
     if (!psp) { note.hidden = true; return; }
     const sup = PS.system.pspSupport();
@@ -458,11 +458,17 @@
     fast: 'Also lightens sound effects and slightly underclocks the console.',
     turbo: 'Draws every other frame and underclocks more. A few games may run slower inside.',
   };
+  const PSP_PERF_NOTES = {
+    quality: 'PSP: fast processor mode, every frame drawn, full graphics effects.',
+    balanced: 'PSP: fast processor mode and lighter graphics readbacks. Recommended.',
+    fast: 'PSP: also skips frames when the phone falls behind.',
+    turbo: 'PSP: skips more frames and some graphics effects. Smoothest, least pretty.',
+  };
   S.perf = P.perf || 'balanced';
   function setPerfChoice(v) {
     S.perf = v;
     $$('#perfSeg button').forEach((b) => b.classList.toggle('on', b.dataset.perf === v));
-    $('#perfNote').textContent = PERF_NOTES[v];
+    $('#perfNote').textContent = (S.system === 'psp' ? PSP_PERF_NOTES : PERF_NOTES)[v];
   }
   $$('#perfSeg button').forEach((b) => (b.onclick = () => { setPerfChoice(b.dataset.perf); P.perf = b.dataset.perf; }));
   setPerfChoice(S.perf);
@@ -479,8 +485,8 @@
     setWaiting('Preparing the disc…');
     try {
       await PS.emu.load({
-        files: S.files, bios: S.bios, multitap: S.multitap, perf: S.perf, system: S.system, debug: !!P.emuDebug, core: P.pspCore || 'stable',
-        handlers: { progress: setWaiting, started: onGameStarted },
+        files: S.files, bios: S.bios, multitap: S.multitap, perf: S.perf, system: S.system, debug: !!P.emuDebug, core: P.pspCore || 'stable', autoSkip: pspAutoSkip(),
+        handlers: { progress: setWaiting, started: onGameStarted, videoSkipped: () => toast('Skipped a video (videos crash PSP on iPhone)', 2500) },
       });
     } catch (err) {
       setWaiting(err.message || 'The game could not be loaded.');
@@ -574,8 +580,8 @@
       S.net.notify && S.net.notify('The host is changing the game…');
       setWaiting('Loading the new game…');
       await PS.emu.load({
-        files: S.files, bios: S.bios, multitap: S.multitap, perf: S.perf, system: S.system, debug: !!P.emuDebug, core: P.pspCore || 'stable',
-        handlers: { progress: setWaiting, started: onGameStarted },
+        files: S.files, bios: S.bios, multitap: S.multitap, perf: S.perf, system: S.system, debug: !!P.emuDebug, core: P.pspCore || 'stable', autoSkip: pspAutoSkip(),
+        handlers: { progress: setWaiting, started: onGameStarted, videoSkipped: () => toast('Skipped a video (videos crash PSP on iPhone)', 2500) },
       });
     } catch (err) {
       setWaiting(null);
@@ -1113,8 +1119,8 @@
             <button class="mini" data-do="load" data-slot="${i}" ${info ? '' : 'disabled'}>Load</button></div>`;
         }
         html += `</div><h3>Speed</h3>
-          ${S.system === 'psp' ? '' : `<div class="seg quad">${['quality', 'balanced', 'fast', 'turbo'].map((v) => `<button data-do="perf" data-v="${v}" class="${S.perf === v ? 'on' : ''}">${v[0].toUpperCase() + v.slice(1)}</button>`).join('')}</div>
-          <p class="note">${PERF_NOTES[S.perf]}</p>`}
+          <div class="seg quad">${['quality', 'balanced', 'fast', 'turbo'].map((v) => `<button data-do="perf" data-v="${v}" class="${S.perf === v ? 'on' : ''}">${v[0].toUpperCase() + v.slice(1)}</button>`).join('')}</div>
+          <p class="note">${(S.system === 'psp' ? PSP_PERF_NOTES : PERF_NOTES)[S.perf]}</p>
           ${PS.emu.canUncap() ? `<label class="toggle"><input type="checkbox" data-do="uncap" ${S.uncapped ? 'checked' : ''}><span><b>Ignore the 30 fps screen limit</b><small>Use when Low Power Mode is on. Turns itself on when needed.</small></span></label>` : ''}`;
         html += `<h3>Game</h3><div class="row2">
           <button class="ghost" data-do="ff">${S.ff ? 'Stop fast forward' : 'Fast forward'}</button>
@@ -1251,6 +1257,7 @@
           setTimeout(() => (location.href = location.pathname), 350);
           break;
         case 'pspexp': setPspExperimental(t.checked); break;
+        case 'pspskip': P.pspAutoSkip = t.checked; toast(t.checked ? 'PSP videos will be skipped automatically' : 'PSP videos will play (may crash on iPhone)'); break;
         case 'pspthreads': P.pspThreads = +t.dataset.v; renderSettings(); toast(+t.dataset.v ? `Emulator limited to ${t.dataset.v} core${t.dataset.v === '1' ? '' : 's'} for the next game` : 'Emulator threads back to automatic'); break;
         case 'pspcore': P.pspCore = t.dataset.v; renderSettings(); toast(`PSP games will use the ${t.dataset.v} emulator build`); break;
         case 'emudebug': P.emuDebug = t.checked; toast(t.checked ? 'Detailed log on for the next game you start' : 'Detailed log off'); break;
@@ -1336,6 +1343,7 @@
       <p class="note" style="margin-top:12px">PSP emulator build:</p>
       <div class="seg"><button data-do="pspcore" data-v="stable" class="${(P.pspCore || 'stable') === 'stable' ? 'on' : ''}">Stable</button><button data-do="pspcore" data-v="nightly" class="${P.pspCore === 'nightly' ? 'on' : ''}">Nightly (newest)</button></div>
       <p class="note">Nightly is EmulatorJS\u2019s daily build with the newest PSP emulator. It may fix crashes, or add new ones. PS1 games always use Stable.</p>
+      <label class="toggle"><input type="checkbox" data-do="pspskip" ${pspAutoSkip() ? 'checked' : ''}><span><b>Auto-skip PSP videos</b><small>Video playback crashes the PSP emulator on iPhone, and skipping right away avoids it. When a video starts, the app taps Start, \u2715 and \u25cb until it ends.</small></span></label>
       <p class="note" style="margin-top:12px">Emulator threads:</p>
       <div class="seg quad">${[['0', 'Auto'], ['4', '4'], ['2', '2'], ['1', '1']].map(([v, l]) => `<button data-do="pspthreads" data-v="${v}" class="${String(P.pspThreads || 0) === v ? 'on' : ''}">${l}</button>`).join('')}</div>
       <p class="note">Makes the emulator think the phone has this many processor cores. The PSP video decoder starts one thread per core, all at once, which may be what crashes at video. Try 1, then 2. Applies to the next game you start.</p>
@@ -1347,6 +1355,7 @@
       </div>
       <div class="row2"><button class="ghost" data-do="psplab">Run full PSP check</button><button class="ghost" data-do="emulog">Copy emulator log</button></div>`;
   }
+  const pspAutoSkip = () => (P.pspAutoSkip != null ? !!P.pspAutoSkip : PS.system.isWebKitOnly);
   async function setPspExperimental(on) {
     P.pspExperimental = on;
     const mode = on ? 'require-corp' : 'credentialless';

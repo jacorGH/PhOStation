@@ -32,6 +32,8 @@ PSP games (.iso, .cso, .pbp) are recognised automatically and get a PSP controll
 - The PSP emulator needs threads, which need a cross-origin-isolated page. GitHub Pages can't send those headers, so the service worker adds them; the app reloads itself once on first open to switch it on. It won't work from a code editor's preview.
 - Discs over 64 MB are streamed: the emulator reads 1 MB pieces from storage as the game needs them (with a 32 MB cache) instead of loading the whole disc into memory. That's what lets 1-2 GB PSP games start on phones, and it lowers memory for big PS1 discs too.
 - **PSP .chd files don't work**: EmulatorJS builds its PSP emulator without .chd support, so they stop with "missing function CHDFileBlockDevice". Use .iso or .cso. (PS1 .chd files are fine.) The app warns when you pick one and explains on screen if a game stops.
+- **Videos on iPhone**: PSP video playback crashes the emulator in Safari, but skipping right away avoids it. *Auto-skip PSP videos* (Settings > Experimental, on by default for iPhone/iPad) taps Start, Cross and Circle the moment a video starts, until it ends.
+- **Speed**: the Speed presets also apply to PSP. All of them switch PPSSPP from EmulatorJS's default Interpreter to the much faster IR interpreter ("IR JIT"); Fast and Turbo also skip frames and some effects.
 - A PSP has one controller: whoever holds P1 plays. Pass it in the menu under Players.
 - PSP is demanding; recent phones and computers work best. .cso files are smaller than .iso.
 
