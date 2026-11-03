@@ -1251,6 +1251,7 @@
           setTimeout(() => (location.href = location.pathname), 350);
           break;
         case 'pspexp': setPspExperimental(t.checked); break;
+        case 'pspthreads': P.pspThreads = +t.dataset.v; renderSettings(); toast(+t.dataset.v ? `Emulator limited to ${t.dataset.v} core${t.dataset.v === '1' ? '' : 's'} for the next game` : 'Emulator threads back to automatic'); break;
         case 'pspcore': P.pspCore = t.dataset.v; renderSettings(); toast(`PSP games will use the ${t.dataset.v} emulator build`); break;
         case 'emudebug': P.emuDebug = t.checked; toast(t.checked ? 'Detailed log on for the next game you start' : 'Detailed log off'); break;
         case 'psplab': runPspLab(); break;
@@ -1335,6 +1336,9 @@
       <p class="note" style="margin-top:12px">PSP emulator build:</p>
       <div class="seg"><button data-do="pspcore" data-v="stable" class="${(P.pspCore || 'stable') === 'stable' ? 'on' : ''}">Stable</button><button data-do="pspcore" data-v="nightly" class="${P.pspCore === 'nightly' ? 'on' : ''}">Nightly (newest)</button></div>
       <p class="note">Nightly is EmulatorJS\u2019s daily build with the newest PSP emulator. It may fix crashes, or add new ones. PS1 games always use Stable.</p>
+      <p class="note" style="margin-top:12px">Emulator threads:</p>
+      <div class="seg quad">${[['0', 'Auto'], ['4', '4'], ['2', '2'], ['1', '1']].map(([v, l]) => `<button data-do="pspthreads" data-v="${v}" class="${String(P.pspThreads || 0) === v ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <p class="note">Makes the emulator think the phone has this many processor cores. The PSP video decoder starts one thread per core, all at once, which may be what crashes at video. Try 1, then 2. Applies to the next game you start.</p>
       <p class="note">What PSP needs from this browser:</p>
       <div class="checks">
         ${row(r.isolated, 'Cross-origin isolation', r.isolated ? 'On' : 'Off (switched on by the app after a reload)')}

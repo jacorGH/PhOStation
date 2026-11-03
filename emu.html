@@ -33,6 +33,32 @@
       console[k] = function () { window.__emuLog(k, arguments); return orig.apply(console, arguments); };
     });
   })();
+  // Thread control: log every background thread (Web Worker) the emulator starts, and optionally make
+  // the emulator (and its threads) believe the phone has fewer processor cores. The video decoder
+  // starts one thread per reported core; capping it can avoid a burst of new threads at video start.
+  (function () {
+    var prefs = {};
+    try { prefs = JSON.parse(localStorage.getItem('phostation.prefs') || '{}'); } catch (e) {}
+    var cap = +prefs.pspThreads || 0;
+    window.__workers = 0;
+    window.__threadCap = cap;
+    if (cap) { try { Object.defineProperty(navigator, 'hardwareConcurrency', { configurable: true, get: function () { return cap; } }); } catch (e) {} }
+    var Orig = window.Worker;
+    if (!Orig) return;
+    function Wrapped(url, opts) {
+      window.__workers++;
+      try { window.__emuLog('beat', ['[phostation] emulator thread #' + window.__workers + ' started' + (opts && opts.name ? ' (' + opts.name + ')' : '')]); } catch (e) {}
+      if (cap && !(opts && opts.type === 'module')) {
+        // Same script, but with the core count capped inside the thread too.
+        var abs = new URL(String(url), location.href).href;
+        var src = 'try{Object.defineProperty(self.navigator,"hardwareConcurrency",{configurable:true,get:function(){return ' + cap + '}})}catch(e){}\nimportScripts(' + JSON.stringify(abs) + ');';
+        return new Orig(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })), opts);
+      }
+      return new Orig(url, opts);
+    }
+    Wrapped.prototype = Orig.prototype;
+    window.Worker = Wrapped;
+  })();
   // Pass emulator errors up to the main page, so they can be shown instead of a silent blank screen.
   (function () {
     var report = function (msg) {

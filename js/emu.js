@@ -283,7 +283,8 @@
           lastUp = g.uploaded;
         }
       } catch (e) {}
-      W.__emuLog('beat', [`[phostation] ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')} running,`
+      const threads = W.__workers != null ? ` threads ${W.__workers}${W.__threadCap ? ' (cores capped at ' + W.__threadCap + ')' : ''},` : '';
+      W.__emuLog('beat', [`[phostation] ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')} running,${threads}`
         + ` memory ${heap != null ? heap + ' MB' : 'n/a'},${gpu} ${fps != null ? fps + ' fps' : 'fps n/a'}${paused ? ' (paused)' : ''},`
         + ` disc read ${Math.round(discStats.readMB)} MB (fetched ${Math.round(discStats.fetchedMB)} MB),`
         + ` biggest read ${discStats.biggestMB.toFixed(1)} MB, big reads ${discStats.bigReads}`]);
@@ -376,7 +377,7 @@
       if (started) return;
       started = true;
       crumb('running');
-      try { W.__emuLog('beat', [`[phostation] build ${PS.build}, ${system.toUpperCase()} ${PS.emu.title}, emulator ${system === 'psp' && opts.core === 'nightly' ? 'nightly' : 'stable'}, ${PS.system.isWebKitOnly ? 'iPhone/iPad' : 'other'}${opts.debug ? ', detailed log' : ''}`]); } catch (e) {}
+      try { W.__emuLog('beat', [`[phostation] build ${PS.build}, ${system.toUpperCase()} ${PS.emu.title}, emulator ${system === 'psp' && opts.core === 'nightly' ? 'nightly' : 'stable'}, cores ${W.__threadCap || 'auto'}, ${PS.system.isWebKitOnly ? 'iPhone/iPad' : 'other'}${opts.debug ? ', detailed log' : ''}`]); } catch (e) {}
       startHeartbeat();
       handlers.started && handlers.started();
     };
